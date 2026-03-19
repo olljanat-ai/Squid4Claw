@@ -37,6 +37,19 @@ func key(host, skillID, sourceIP string) string {
 	return sourceIP + "|" + skillID + "|" + host
 }
 
+// MatchHost checks if a hostname matches a pattern.
+// Supports exact match and wildcard patterns like *.example.com.
+func MatchHost(pattern, host string) bool {
+	if pattern == host {
+		return true
+	}
+	if strings.HasPrefix(pattern, "*.") {
+		suffix := pattern[1:] // e.g., ".example.com"
+		return strings.HasSuffix(host, suffix)
+	}
+	return false
+}
+
 // Manager manages host approval decisions.
 type Manager struct {
 	mu        sync.RWMutex
@@ -63,6 +76,28 @@ func (m *Manager) CheckExisting(host, skillID, sourceIP string) (Status, bool) {
 		return "", false
 	}
 	return a.Status, true
+}
+
+// CheckExistingWithWildcards is like CheckExisting but also matches wildcard
+// host patterns (e.g., *.example.com matches api.example.com).
+// It checks exact match first, then scans for wildcard patterns.
+func (m *Manager) CheckExistingWithWildcards(host, skillID, sourceIP string) (Status, bool) {
+	// Try exact match first (fast path).
+	if status, ok := m.CheckExisting(host, skillID, sourceIP); ok {
+		return status, true
+	}
+	// Scan for wildcard patterns.
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, a := range m.approvals {
+		if a.SkillID != skillID || a.SourceIP != sourceIP {
+			continue
+		}
+		if a.Host != host && MatchHost(a.Host, host) {
+			return a.Status, true
+		}
+	}
+	return "", false
 }
 
 // Check returns the current status for a host+skill+sourceIP, or StatusPending

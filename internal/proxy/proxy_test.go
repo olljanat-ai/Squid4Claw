@@ -231,6 +231,51 @@ func TestProxy_VMSpecificApproval(t *testing.T) {
 	}
 }
 
+func TestProxy_WildcardGlobalApproval(t *testing.T) {
+	p, _, approvals := setupProxy(t)
+
+	// Approve wildcard globally.
+	approvals.Decide("*.example.com", "", "", approval.StatusApproved, "wildcard")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	// Request to a subdomain should match the wildcard.
+	req := httptest.NewRequest("GET", backend.URL+"/test", nil)
+	req.Host = "api.example.com"
+	w := httptest.NewRecorder()
+	p.handleHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for wildcard-approved host, got %d", w.Code)
+	}
+}
+
+func TestProxy_WildcardPreApprovedHost(t *testing.T) {
+	p, skills, _ := setupProxy(t)
+	skills.AddSkill(auth.Skill{
+		ID: "s1", Token: "tok-1", Active: true,
+		AllowedHost: []string{"*.example.com"},
+	})
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	req := httptest.NewRequest("GET", backend.URL+"/test", nil)
+	req.Host = "api.example.com"
+	req.Header.Set(AuthHeader, "tok-1")
+	w := httptest.NewRecorder()
+	p.handleHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for wildcard pre-approved host, got %d", w.Code)
+	}
+}
+
 func TestProxy_AuthHeaderStripped(t *testing.T) {
 	p, skills, _ := setupProxy(t)
 	skills.AddSkill(auth.Skill{

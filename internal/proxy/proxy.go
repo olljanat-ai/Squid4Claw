@@ -120,20 +120,21 @@ func (p *Proxy) checkApproval(host string, skill *auth.Skill, sourceIP string) a
 	}
 
 	// 1. Check global approval (host approved/denied for all agents).
-	if globalStatus, exists := p.Approvals.CheckExisting(host, "", ""); exists && globalStatus != approval.StatusPending {
+	// Uses wildcard matching so *.example.com rules match sub.example.com.
+	if globalStatus, exists := p.Approvals.CheckExistingWithWildcards(host, "", ""); exists && globalStatus != approval.StatusPending {
 		return globalStatus
 	}
 
 	// 2. Check VM-specific approval.
 	if sourceIP != "" {
-		if vmStatus, exists := p.Approvals.CheckExisting(host, "", sourceIP); exists && vmStatus != approval.StatusPending {
+		if vmStatus, exists := p.Approvals.CheckExistingWithWildcards(host, "", sourceIP); exists && vmStatus != approval.StatusPending {
 			return vmStatus
 		}
 	}
 
 	// 3. Check skill-specific approval.
 	if skill != nil {
-		if skillStatus, exists := p.Approvals.CheckExisting(host, skill.ID, ""); exists && skillStatus != approval.StatusPending {
+		if skillStatus, exists := p.Approvals.CheckExistingWithWildcards(host, skill.ID, ""); exists && skillStatus != approval.StatusPending {
 			return skillStatus
 		}
 	}

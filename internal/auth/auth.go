@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"sync"
 )
  
@@ -109,6 +110,9 @@ func (s *SkillStore) IsHostPreApproved(token, host string) bool {
 	}
 	for _, h := range skill.AllowedHost {
 		if h == host || h == "*" {
+			return true
+		}
+		if strings.HasPrefix(h, "*.") && strings.HasSuffix(host, h[1:]) {
 			return true
 		}
 	}

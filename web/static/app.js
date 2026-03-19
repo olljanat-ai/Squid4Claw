@@ -152,6 +152,46 @@ async function decide(host, skillID, sourceIP, status) {
   }
 }
 
+// --- Add Rule (proactive approval) ---
+function showAddRule() {
+  document.getElementById('modal-rule').classList.add('active');
+  updateRuleFields();
+}
+function hideAddRule() {
+  document.getElementById('modal-rule').classList.remove('active');
+  document.getElementById('rule-host').value = '';
+  document.getElementById('rule-level').value = 'global';
+  document.getElementById('rule-source-ip').value = '';
+  document.getElementById('rule-status').value = 'approved';
+  document.getElementById('rule-note').value = '';
+  updateRuleFields();
+}
+
+function updateRuleFields() {
+  const level = document.getElementById('rule-level').value;
+  document.getElementById('rule-vm-fields').style.display = level === 'vm' ? 'block' : 'none';
+}
+
+async function addRule() {
+  const host = document.getElementById('rule-host').value.trim();
+  if (!host) { alert('Host pattern is required'); return; }
+  const level = document.getElementById('rule-level').value;
+  const status = document.getElementById('rule-status').value;
+  const note = document.getElementById('rule-note').value.trim();
+  let sourceIP = '';
+  if (level === 'vm') {
+    sourceIP = document.getElementById('rule-source-ip').value.trim();
+    if (!sourceIP) { alert('Source IP is required for VM-specific rules'); return; }
+  }
+  try {
+    await api('POST', '/api/approvals/decide', { host, skill_id: '', source_ip: sourceIP, status, note });
+    hideAddRule();
+    loadApprovals();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
 // --- Skills ---
 async function loadSkills() {
   try {

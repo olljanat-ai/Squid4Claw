@@ -203,6 +203,71 @@ func TestManager_GlobalCascadesToSkill(t *testing.T) {
 	}
 }
 
+func TestMatchHost(t *testing.T) {
+	tests := []struct {
+		pattern string
+		host    string
+		want    bool
+	}{
+		{"example.com", "example.com", true},
+		{"example.com", "other.com", false},
+		{"*.example.com", "api.example.com", true},
+		{"*.example.com", "sub.api.example.com", true},
+		{"*.example.com", "example.com", false},
+		{"*.example.com", "other.com", false},
+	}
+	for _, tt := range tests {
+		got := MatchHost(tt.pattern, tt.host)
+		if got != tt.want {
+			t.Errorf("MatchHost(%q, %q) = %v, want %v", tt.pattern, tt.host, got, tt.want)
+		}
+	}
+}
+
+func TestManager_WildcardApproval(t *testing.T) {
+	m := NewManager()
+
+	// Pre-approve a wildcard pattern globally.
+	m.Decide("*.example.com", "", "", StatusApproved, "wildcard")
+
+	// Exact match should not exist.
+	_, exists := m.CheckExisting("api.example.com", "", "")
+	if exists {
+		t.Error("exact match should not exist for wildcard rule")
+	}
+
+	// Wildcard-aware check should match.
+	status, exists := m.CheckExistingWithWildcards("api.example.com", "", "")
+	if !exists || status != StatusApproved {
+		t.Errorf("expected wildcard match approved, got %s (exists=%v)", status, exists)
+	}
+
+	// Non-matching host should not match.
+	_, exists = m.CheckExistingWithWildcards("other.com", "", "")
+	if exists {
+		t.Error("non-matching host should not match wildcard")
+	}
+}
+
+func TestManager_WildcardVMApproval(t *testing.T) {
+	m := NewManager()
+
+	// Pre-approve wildcard for a specific VM.
+	m.Decide("*.github.com", "", "10.255.255.10", StatusApproved, "vm wildcard")
+
+	// Should match for that VM.
+	status, exists := m.CheckExistingWithWildcards("api.github.com", "", "10.255.255.10")
+	if !exists || status != StatusApproved {
+		t.Errorf("expected VM wildcard match, got %s (exists=%v)", status, exists)
+	}
+
+	// Should not match for different VM.
+	_, exists = m.CheckExistingWithWildcards("api.github.com", "", "10.255.255.11")
+	if exists {
+		t.Error("wildcard should not match different VM")
+	}
+}
+
 func TestManager_LoadAndExport(t *testing.T) {
 	m := NewManager()
 	m.Check("a.com", "skill-1", "")
