@@ -81,7 +81,6 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            firewall4ai-linux-amd64
             firewall4ai-*.qcow2
             firewall4ai-*.vmdk
             firewall4ai-*.vhdx

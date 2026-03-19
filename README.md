@@ -35,9 +35,6 @@ On first startup, the proxy:
 State is persisted to a JSON file in the data directory.
 
 ## Quick Start
-
-### Option A: VM Appliance (Recommended)
-
 Download a pre-built VM image from the [Releases](../../releases) page:
 
 | Format | Platform |
@@ -68,25 +65,7 @@ The VM is a minimal Alpine Linux appliance that runs Firewall4AI as the main ser
 
 Default root password: `firewall4ai` (change after first login via serial console or SSH)
 
-### Option B: Standalone Binary
-
-```bash
-# Build
-make build
-
-# Run with defaults
-./bin/firewall4ai
-
-# Run with config file
-./bin/firewall4ai -config config.json
-```
-
-On first run, the CA certificate is generated at `./data/ca.crt`. You must install this CA on systems that will connect through the proxy (see [Trusting the CA Certificate](#trusting-the-ca-certificate)).
-
-The CA certificate is also available for download at `https://localhost:443/ca.crt`.
-
 ## Configuration
-
 Create a `config.json` file (all fields optional):
 
 ```json
@@ -110,25 +89,21 @@ Create a `config.json` file (all fields optional):
 | `max_log_entries` | `10000` | Maximum log entries kept in memory |
 
 ## Trusting the CA Certificate
-
 For TLS MITM inspection to work, the AI agent's environment must trust the Firewall4AI CA. The CA certificate is at `<data_dir>/ca.crt`.
 
 ### Debian/Ubuntu
-
 ```bash
 sudo cp data/ca.crt /usr/local/share/ca-certificates/firewall4ai.crt
 sudo update-ca-certificates
 ```
 
 ### RHEL/CentOS/Fedora
-
 ```bash
 sudo cp data/ca.crt /etc/pki/ca-trust/source/anchors/firewall4ai.crt
 sudo update-ca-trust
 ```
 
 ### For specific tools
-
 ```bash
 # curl
 curl --cacert data/ca.crt https://example.com
@@ -143,114 +118,9 @@ export NODE_EXTRA_CA_CERTS=data/ca.crt
 export SSL_CERT_FILE=data/ca.crt
 ```
 
-## Locking Down the Network with iptables
-
-To force all HTTP/HTTPS traffic from the AI agent environment through Firewall4AI and block everything else, use the following iptables rules. This assumes:
-
-- Firewall4AI runs on the **same host** as the agents (proxy at `127.0.0.1:8080`, admin at `127.0.0.1:443`)
-- Firewall4AI runs as user `firewall4ai` (so its own outbound traffic is not blocked)
-- The agent runs as user `agent`
-
-```bash
-# ============================================================
-# Firewall4AI iptables lockdown rules
-# ============================================================
-# Run as root. Adjust PROXY_USER, AGENT_USER, and ports as needed.
-
-PROXY_USER=firewall4ai
-AGENT_USER=agent
-PROXY_PORT=8080
-ADMIN_PORT=443
-
-# --- Allow the proxy process itself to make outbound connections ---
-iptables -A OUTPUT -m owner --uid-owner $(id -u $PROXY_USER) -j ACCEPT
-
-# --- Allow loopback (agent <-> proxy communication) ---
-iptables -A OUTPUT -o lo -j ACCEPT
-iptables -A INPUT -i lo -j ACCEPT
-
-# --- Allow established/related connections ---
-iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-
-# --- Allow inbound to proxy and admin ports ---
-iptables -A INPUT -p tcp --dport $PROXY_PORT -j ACCEPT
-iptables -A INPUT -p tcp --dport $ADMIN_PORT -j ACCEPT
-
-# --- Allow DNS for the proxy user ---
-iptables -A OUTPUT -m owner --uid-owner $(id -u $PROXY_USER) -p udp --dport 53 -j ACCEPT
-iptables -A OUTPUT -m owner --uid-owner $(id -u $PROXY_USER) -p tcp --dport 53 -j ACCEPT
-
-# --- Block ALL other outbound HTTP/HTTPS from the agent ---
-iptables -A OUTPUT -m owner --uid-owner $(id -u $AGENT_USER) -p tcp --dport 80 -j REJECT
-iptables -A OUTPUT -m owner --uid-owner $(id -u $AGENT_USER) -p tcp --dport 443 -j REJECT
-
-# --- Block ALL other outbound TCP/UDP from the agent ---
-iptables -A OUTPUT -m owner --uid-owner $(id -u $AGENT_USER) -p tcp -j REJECT
-iptables -A OUTPUT -m owner --uid-owner $(id -u $AGENT_USER) -p udp -j REJECT
-```
-
-### With separate proxy host
-
-If Firewall4AI runs on a different machine (e.g., gateway), adjust the rules for the agent host:
-
-```bash
-PROXY_IP=10.0.0.1
-PROXY_PORT=8080
-ADMIN_PORT=443
-
-# Allow connections to the proxy only
-iptables -A OUTPUT -p tcp -d $PROXY_IP --dport $PROXY_PORT -j ACCEPT
-iptables -A OUTPUT -p tcp -d $PROXY_IP --dport $ADMIN_PORT -j ACCEPT
-
-# Allow DNS
-iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
-
-# Allow established
-iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-
-# Allow loopback
-iptables -A OUTPUT -o lo -j ACCEPT
-
-# Block everything else
-iptables -A OUTPUT -j REJECT
-```
-
-### Persisting iptables rules
-
-```bash
-# Save rules
-iptables-save > /etc/iptables/rules.v4
-
-# On Debian/Ubuntu, install iptables-persistent:
-apt install iptables-persistent
-```
-
-### Verifying the lockdown
-
-```bash
-# As the agent user, direct connections should be blocked:
-sudo -u agent curl https://example.com
-# Expected: Connection refused
-
-# Through the proxy (without token), should get 407:
-sudo -u agent curl -x http://127.0.0.1:8080 http://example.com
-# Expected: 407 Proxy Authentication Required
-
-# Through the proxy with valid token:
-sudo -u agent curl -x http://127.0.0.1:8080 \
-  -H "X-Firewall4AI-Token: <token>" \
-  --cacert data/ca.crt \
-  https://example.com
-# Expected: Works if host is approved
-```
-
 ## Usage
-
 ### 1. Create a Skill
-
 Via the admin UI or API:
-
 ```bash
 curl -k -X POST https://localhost:443/api/skills \
   -H 'Content-Type: application/json' \
@@ -260,23 +130,17 @@ curl -k -X POST https://localhost:443/api/skills \
 This returns a token that the AI agent must use for authentication.
 
 ### 2. Configure the AI Agent
-
 Set the agent's HTTP proxy to `http://localhost:8080` and include the token header in all requests:
-
 ```
 X-Firewall4AI-Token: <skill-token>
 ```
-
 The agent's environment must also trust the Firewall4AI CA (see above).
 
 ### 3. Approve Connections
-
 When an agent tries to connect to a host not in its pre-approved list, the request blocks and appears in the admin UI as pending. An admin can approve or deny it.
 
 ### 4. Credential Injection (Optional)
-
 Configure credentials in the admin UI to automatically inject authentication into outgoing requests. This works for **both HTTP and HTTPS** thanks to TLS MITM inspection. Supported injection types:
-
 - **Custom Header** - Set any header (e.g., `X-API-Key`)
 - **Bearer Token** - Sets `Authorization: Bearer <token>`
 - **Basic Auth** - Sets HTTP basic authentication
@@ -285,7 +149,6 @@ Configure credentials in the admin UI to automatically inject authentication int
 Credentials can be scoped to specific hosts (with wildcard support like `*.example.com`) and specific skills.
 
 ## API Reference
-
 ### Skills
 | Method | Path | Description |
 |--------|------|-------------|
@@ -321,45 +184,3 @@ Credentials can be scoped to specific hosts (with wildcard support like `*.examp
 |--------|------|-------------|
 | `GET` | `/api/health` | Health check |
 | `GET` | `/ca.crt` | Download CA certificate |
-
-## Development
-
-```bash
-# Run tests
-make test
-
-# Lint
-make lint
-
-# Build
-make build
-
-# Build, test, and lint
-make all
-```
-
-## Building VM Images Locally
-
-To build VM images locally (requires root on Alpine Linux or a CI environment):
-
-```bash
-cd vm
-sudo VERSION=v1.0.0 ./build.sh
-```
-
-This produces `dist/firewall4ai-v1.0.0.{qcow2,vmdk,vhdx}`.
-
-## Release
-
-Releases are automated via GitHub Actions. To create a release:
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-This builds a Linux amd64 binary and VM appliance images (qcow2, vmdk, vhdx), then creates a GitHub release with auto-generated release notes.
-
-## License
-
-See [LICENSE](LICENSE) file.
