@@ -61,14 +61,16 @@ func TestExtractHost(t *testing.T) {
 	}
 }
 
-func TestProxy_NoAuthHeader(t *testing.T) {
+func TestProxy_NoAuthHeader_Anonymous(t *testing.T) {
 	p, _, _ := setupProxy(t)
 	req := httptest.NewRequest("GET", "http://example.com/test", nil)
 	w := httptest.NewRecorder()
 	p.handleHTTP(w, req)
 
-	if w.Code != http.StatusProxyAuthRequired {
-		t.Errorf("expected 407, got %d", w.Code)
+	// Without token, request is anonymous. No approval exists, so it times
+	// out and gets denied (403).
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for anonymous unapproved host, got %d", w.Code)
 	}
 }
 
@@ -143,6 +145,52 @@ func TestProxy_ApprovedHost(t *testing.T) {
 	}
 }
 
+func TestProxy_GlobalApproval(t *testing.T) {
+	p, _, approvals := setupProxy(t)
+
+	// Globally approve a host (empty skillID).
+	approvals.Decide("global.example.com", "", approval.StatusApproved, "global")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	// Anonymous request (no token) should pass via global approval.
+	req := httptest.NewRequest("GET", backend.URL+"/test", nil)
+	req.Host = "global.example.com"
+	w := httptest.NewRecorder()
+	p.handleHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for globally approved host (anonymous), got %d", w.Code)
+	}
+}
+
+func TestProxy_GlobalApproval_WithSkill(t *testing.T) {
+	p, skills, approvals := setupProxy(t)
+	skills.AddSkill(auth.Skill{ID: "s1", Token: "tok-1", Active: true})
+
+	// Globally approve a host.
+	approvals.Decide("global.example.com", "", approval.StatusApproved, "global")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	// Authenticated request should also pass via global approval.
+	req := httptest.NewRequest("GET", backend.URL+"/test", nil)
+	req.Host = "global.example.com"
+	req.Header.Set(AuthHeader, "tok-1")
+	w := httptest.NewRecorder()
+	p.handleHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for globally approved host (with skill), got %d", w.Code)
+	}
+}
+
 func TestProxy_AuthHeaderStripped(t *testing.T) {
 	p, skills, _ := setupProxy(t)
 	skills.AddSkill(auth.Skill{
@@ -168,15 +216,16 @@ func TestProxy_AuthHeaderStripped(t *testing.T) {
 	}
 }
 
-func TestProxy_CONNECT_NoAuth(t *testing.T) {
+func TestProxy_CONNECT_NoAuth_Anonymous(t *testing.T) {
 	p, _, _ := setupProxy(t)
 	req := httptest.NewRequest("CONNECT", "example.com:443", nil)
 	req.Host = "example.com:443"
 	w := httptest.NewRecorder()
 	p.handleConnect(w, req)
 
-	if w.Code != http.StatusProxyAuthRequired {
-		t.Errorf("expected 407, got %d", w.Code)
+	// Without token, CONNECT is anonymous. No approval → timeout → 403.
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for anonymous unapproved CONNECT, got %d", w.Code)
 	}
 }
 
@@ -360,5 +409,15 @@ func TestProxy_MITM_HostCertVerifiable(t *testing.T) {
 	cn := state.PeerCertificates[0].Subject.CommonName
 	if cn != "test.example.com" {
 		t.Errorf("expected CN test.example.com, got %q", cn)
+	}
+}
+
+func TestGetSkillID(t *testing.T) {
+	if got := getSkillID(nil); got != "" {
+		t.Errorf("getSkillID(nil) = %q, want empty", got)
+	}
+	skill := &auth.Skill{ID: "test-id"}
+	if got := getSkillID(skill); got != "test-id" {
+		t.Errorf("getSkillID(skill) = %q, want %q", got, "test-id")
 	}
 }

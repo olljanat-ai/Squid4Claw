@@ -107,6 +107,40 @@ func TestManager_ListAll(t *testing.T) {
 	}
 }
 
+func TestManager_CheckExisting(t *testing.T) {
+	m := NewManager()
+
+	// Non-existent entry.
+	_, exists := m.CheckExisting("unknown.com", "skill-1")
+	if exists {
+		t.Error("expected false for non-existent entry")
+	}
+
+	// Register and check.
+	m.Check("example.com", "skill-1")
+	status, exists := m.CheckExisting("example.com", "skill-1")
+	if !exists {
+		t.Fatal("expected true for existing entry")
+	}
+	if status != StatusPending {
+		t.Errorf("expected pending, got %s", status)
+	}
+
+	// Decide and check.
+	m.Decide("example.com", "skill-1", StatusApproved, "ok")
+	status, exists = m.CheckExisting("example.com", "skill-1")
+	if !exists || status != StatusApproved {
+		t.Errorf("expected approved, got %s (exists=%v)", status, exists)
+	}
+
+	// Global approval (empty skillID).
+	m.Decide("global.com", "", StatusApproved, "global")
+	status, exists = m.CheckExisting("global.com", "")
+	if !exists || status != StatusApproved {
+		t.Errorf("expected global approved, got %s (exists=%v)", status, exists)
+	}
+}
+
 func TestManager_LoadAndExport(t *testing.T) {
 	m := NewManager()
 	m.Check("a.com", "skill-1")

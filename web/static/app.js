@@ -2,7 +2,7 @@
 const API = '';
 let pollInterval = null;
 let lastLogID = 0;
- 
+
 // --- Navigation ---
 function navigate(page) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -15,7 +15,7 @@ function navigate(page) {
   if (page === 'credentials') loadCredentials();
   if (page === 'logs') loadLogs();
 }
- 
+
 // --- API helpers ---
 async function api(method, path, body) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
@@ -27,7 +27,13 @@ async function api(method, path, body) {
   }
   return res.json();
 }
- 
+
+// --- Skill display helper ---
+function formatSkillID(skillID) {
+  if (!skillID) return '<span class="badge-status approved">global</span>';
+  return esc(skillID);
+}
+
 // --- Dashboard ---
 async function loadDashboard() {
   try {
@@ -56,12 +62,14 @@ async function loadDashboard() {
       tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No pending approvals</td></tr>';
     } else {
       pending.slice(0, 5).forEach(a => {
+        const skillDisplay = formatSkillID(a.skill_id);
         tbody.innerHTML += `<tr>
           <td><strong>${esc(a.host)}</strong></td>
-          <td>${esc(a.skill_id)}</td>
+          <td>${skillDisplay}</td>
           <td>${timeAgo(a.created_at)}</td>
           <td>
             <button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','approved')">Approve</button>
+            ${a.skill_id ? `<button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','','approved')" title="Approve for all agents">Approve Global</button>` : ''}
             <button class="btn btn-danger btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','denied')">Deny</button>
           </td>
         </tr>`;
@@ -71,7 +79,7 @@ async function loadDashboard() {
     console.error('Dashboard load error:', e);
   }
 }
- 
+
 // --- Approvals ---
 async function loadApprovals() {
   try {
@@ -95,14 +103,18 @@ async function loadApprovals() {
       return (order[a.status] || 9) - (order[b.status] || 9);
     });
     approvals.forEach(a => {
+      const skillDisplay = formatSkillID(a.skill_id);
+      const globalBtn = a.skill_id && a.status === 'pending'
+        ? `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','','approved')" title="Approve for all agents">Global</button>` : '';
       const actions = a.status === 'pending'
         ? `<button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','approved')">Approve</button>
+           ${globalBtn}
            <button class="btn btn-danger btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','denied')">Deny</button>`
         : `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','approved')">Approve</button>
            <button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','denied')">Deny</button>`;
       tbody.innerHTML += `<tr>
         <td><strong>${esc(a.host)}</strong></td>
-        <td>${esc(a.skill_id)}</td>
+        <td>${skillDisplay}</td>
         <td><span class="badge-status ${a.status}">${a.status}</span></td>
         <td>${timeAgo(a.updated_at)}</td>
         <td>${actions}</td>
@@ -112,7 +124,7 @@ async function loadApprovals() {
     console.error('Approvals load error:', e);
   }
 }
- 
+
 async function decide(host, skillID, status) {
   try {
     await api('POST', '/api/approvals/decide', { host, skill_id: skillID, status });
@@ -126,7 +138,7 @@ async function decide(host, skillID, status) {
     alert('Error: ' + e.message);
   }
 }
- 
+
 // --- Skills ---
 async function loadSkills() {
   try {
@@ -153,32 +165,34 @@ async function loadSkills() {
     console.error('Skills load error:', e);
   }
 }
- 
+
 function showCreateSkill() {
   document.getElementById('modal-skill').classList.add('active');
 }
 function hideCreateSkill() {
   document.getElementById('modal-skill').classList.remove('active');
 }
- 
+
 async function createSkill() {
   const id = document.getElementById('skill-id').value.trim();
   const name = document.getElementById('skill-name').value.trim();
   const hosts = document.getElementById('skill-hosts').value.trim().split(/[\n,]+/).map(h => h.trim()).filter(Boolean);
-  if (!id || !name) { alert('ID and Name are required'); return; }
+  if (!name) { alert('Name is required'); return; }
   try {
-    const result = await api('POST', '/api/skills', { id, name, allowed_hosts: hosts });
+    const body = { name, allowed_hosts: hosts };
+    if (id) body.id = id;
+    const result = await api('POST', '/api/skills', body);
     hideCreateSkill();
     document.getElementById('skill-id').value = '';
     document.getElementById('skill-name').value = '';
     document.getElementById('skill-hosts').value = '';
     loadSkills();
-    alert('Skill created! Token: ' + result.token);
+    alert('Skill created!\n\nID: ' + result.id + '\nToken: ' + result.token);
   } catch (e) {
     alert('Error: ' + e.message);
   }
 }
- 
+
 async function deleteSkill(id) {
   if (!confirm(`Delete skill "${id}"?`)) return;
   try {
@@ -188,14 +202,14 @@ async function deleteSkill(id) {
     alert('Error: ' + e.message);
   }
 }
- 
+
 function copyToken(el) {
   navigator.clipboard.writeText(el.textContent);
   const orig = el.textContent;
   el.textContent = 'Copied!';
   setTimeout(() => { el.textContent = orig; }, 1000);
 }
- 
+
 // --- Credentials ---
 async function loadCredentials() {
   try {
@@ -210,7 +224,7 @@ async function loadCredentials() {
       tbody.innerHTML += `<tr>
         <td><strong>${esc(c.name)}</strong></td>
         <td>${esc(c.host_pattern)}</td>
-        <td>${esc(c.skill_id || 'all')}</td>
+        <td>${formatSkillID(c.skill_id)}</td>
         <td><span class="badge-status approved">${esc(c.injection_type)}</span></td>
         <td><span class="badge-status ${c.active ? 'approved' : 'denied'}">${c.active ? 'active' : 'inactive'}</span></td>
         <td><button class="btn btn-danger btn-sm" onclick="deleteCredential('${esc(c.id)}')">Delete</button></td>
@@ -220,7 +234,7 @@ async function loadCredentials() {
     console.error('Credentials load error:', e);
   }
 }
- 
+
 function showCreateCred() {
   document.getElementById('modal-cred').classList.add('active');
   updateCredFields();
@@ -228,7 +242,7 @@ function showCreateCred() {
 function hideCreateCred() {
   document.getElementById('modal-cred').classList.remove('active');
 }
- 
+
 function updateCredFields() {
   const type = document.getElementById('cred-type').value;
   document.getElementById('cred-header-fields').style.display = type === 'header' ? 'block' : 'none';
@@ -236,7 +250,7 @@ function updateCredFields() {
   document.getElementById('cred-bearer-fields').style.display = type === 'bearer' ? 'block' : 'none';
   document.getElementById('cred-query-fields').style.display = type === 'query_param' ? 'block' : 'none';
 }
- 
+
 async function createCredential() {
   const type = document.getElementById('cred-type').value;
   const cred = {
@@ -267,7 +281,7 @@ async function createCredential() {
     alert('Error: ' + e.message);
   }
 }
- 
+
 async function deleteCredential(id) {
   if (!confirm('Delete this credential?')) return;
   try {
@@ -277,7 +291,7 @@ async function deleteCredential(id) {
     alert('Error: ' + e.message);
   }
 }
- 
+
 // --- Logs ---
 async function loadLogs() {
   try {
@@ -287,7 +301,7 @@ async function loadLogs() {
     console.error('Logs load error:', e);
   }
 }
- 
+
 function renderLogs(logs) {
   const tbody = document.getElementById('logs-tbody');
   tbody.innerHTML = '';
@@ -299,7 +313,7 @@ function renderLogs(logs) {
     if (l.id > lastLogID) lastLogID = l.id;
     tbody.innerHTML += `<tr>
       <td style="color:var(--text-dim);font-size:11px">${formatTime(l.timestamp)}</td>
-      <td>${esc(l.skill_id || '-')}</td>
+      <td>${formatSkillID(l.skill_id)}</td>
       <td><span class="method-badge">${esc(l.method)}</span></td>
       <td><strong>${esc(l.host)}</strong></td>
       <td>${esc(l.path || '-')}</td>
@@ -308,7 +322,7 @@ function renderLogs(logs) {
     </tr>`;
   });
 }
- 
+
 // --- Polling ---
 function startPolling() {
   pollInterval = setInterval(async () => {
@@ -333,7 +347,7 @@ function startPolling() {
             const tr = document.createElement('tr');
             tr.innerHTML = `
               <td style="color:var(--text-dim);font-size:11px">${formatTime(l.timestamp)}</td>
-              <td>${esc(l.skill_id || '-')}</td>
+              <td>${formatSkillID(l.skill_id)}</td>
               <td><span class="method-badge">${esc(l.method)}</span></td>
               <td><strong>${esc(l.host)}</strong></td>
               <td>${esc(l.path || '-')}</td>
@@ -352,7 +366,7 @@ function startPolling() {
     }
   }, 3000);
 }
- 
+
 // --- Utilities ---
 function esc(s) {
   if (!s) return '';
@@ -360,13 +374,13 @@ function esc(s) {
   div.textContent = String(s);
   return div.innerHTML;
 }
- 
+
 function formatTime(ts) {
   if (!ts) return '-';
   const d = new Date(ts);
   return d.toLocaleTimeString() + ' ' + d.toLocaleDateString();
 }
- 
+
 function timeAgo(ts) {
   if (!ts) return '-';
   const seconds = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
@@ -375,7 +389,7 @@ function timeAgo(ts) {
   if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
   return Math.floor(seconds / 86400) + 'd ago';
 }
- 
+
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.sidebar nav a').forEach(a => {

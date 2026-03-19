@@ -9,14 +9,30 @@ func TestGenerateToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateToken() error: %v", err)
 	}
-	if len(token) != 64 { // 32 bytes = 64 hex chars
-		t.Errorf("expected token length 64, got %d", len(token))
+	// GUID format: 8-4-4-4-12 = 36 chars
+	if len(token) != 36 {
+		t.Errorf("expected token length 36 (GUID), got %d", len(token))
+	}
+	// Check GUID structure: dashes at positions 8, 13, 18, 23
+	if token[8] != '-' || token[13] != '-' || token[18] != '-' || token[23] != '-' {
+		t.Errorf("token %q does not match GUID format", token)
 	}
 
 	// Tokens should be unique.
 	token2, _ := GenerateToken()
 	if token == token2 {
 		t.Error("two generated tokens should not be equal")
+	}
+}
+
+func TestGenerateGUID(t *testing.T) {
+	guid := GenerateGUID()
+	if len(guid) != 36 {
+		t.Errorf("expected GUID length 36, got %d", len(guid))
+	}
+	// Version 4: character at position 14 should be '4'
+	if guid[14] != '4' {
+		t.Errorf("expected version 4 at position 14, got %c", guid[14])
 	}
 }
 

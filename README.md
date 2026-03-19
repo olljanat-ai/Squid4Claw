@@ -1,38 +1,105 @@
 # Firewall4AI
 
-Transparent HTTP/HTTPS proxy for controlling where AI agents can connect from isolated environments.
+Transparent firewall for controlling where AI agents can connect from isolated environments.
 
-Connections are **denied by default** and require admin approval before first use. AI agents authenticate with skill-specific tokens that load per-skill rulesets. The proxy performs **TLS MITM inspection** on HTTPS traffic, enabling credential injection for both HTTP and HTTPS requests so agents never need to know secrets directly.
+Agents need **no proxy configuration** - all HTTP/HTTPS traffic is intercepted transparently via iptables. Connections are **denied by default** and require admin approval before first use. Agents can optionally authenticate with skill-specific tokens (GUID format) for per-skill rulesets. The proxy performs **TLS MITM inspection** on HTTPS traffic, enabling credential injection so agents never need to know secrets directly.
 
 ## Features
 
-- **Default-deny proxy** - All outbound connections require explicit admin approval
-- **TLS MITM inspection** - Full HTTPS inspection with auto-generated per-host certificates, enabling credential injection and request logging for encrypted traffic
-- **Skill-based authentication** - Each AI agent skill gets its own token and ruleset
+- **Fully transparent proxy** - Agents need no proxy configuration; iptables redirects all HTTP/HTTPS traffic automatically
+- **Default-deny firewall** - All outbound connections require explicit admin approval
+- **Global and per-skill approvals** - Admin can approve hosts globally (all agents) or for specific skills only
+- **Anonymous and authenticated access** - Agents can make web calls without skill tokens; admin controls what is allowed
+- **TLS MITM inspection** - Full HTTPS inspection with auto-generated per-host certificates
+- **Skill-based authentication** - Optional per-skill GUID tokens for fine-grained access control
 - **Pre-approved hosts** - Configure allowed hosts per skill to skip manual approval
-- **Credential injection** - Inject API keys, bearer tokens, basic auth, or query parameters into both HTTP and HTTPS requests on behalf of agents
-- **Auto-generated certificates** - CA and admin UI TLS certificates are generated automatically on first run
+- **Credential injection** - Inject API keys, bearer tokens, basic auth, or query parameters into requests on behalf of agents
 - **Admin UI** - Modern web interface (always HTTPS) for managing approvals, skills, credentials, and viewing logs
 - **Real-time logging** - All proxy requests (including decrypted HTTPS) are logged and visible in the admin UI
 
-## Architecture
+## Network Architecture
 
 ```
-AI Agent --[HTTP]--> Proxy (:8080) --[approved]--> Target Service
-AI Agent --[HTTPS CONNECT]--> Proxy (:8080) --[TLS MITM]--> Target Service
-                                |
-                   Admin UI (:443/HTTPS) <-- Human Admin
+                    +-----------------------------------------+
+                    |           External Network              |
+                    |        (Internet / Corp LAN)            |
+                    +-------------------+---------------------+
+                                        |
+                                   +----+----+
+                                   |  eth0   |
+                                   | (DHCP)  |
+                    +--------------+---------+--------------+
+                    |          Firewall4AI VM                |
+                    |                                        |
+                    |  +----------------------------------+  |
+                    |  |  firewall4ai process             |  |
+                    |  |                                  |  |
+                    |  |  Proxy HTTP     :8080            |  |
+                    |  |  Transparent TLS:8443            |  |
+                    |  |  Admin UI       :443 (HTTPS)     |  |
+                    |  +----------------------------------+  |
+                    |                                        |
+                    |  +----------------------------------+  |
+                    |  |  iptables NAT (PREROUTING)       |  |
+                    |  |                                  |  |
+                    |  |  :80  --> REDIRECT --> :8080     |  |
+                    |  |  :443 --> REDIRECT --> :8443     |  |
+                    |  +----------------------------------+  |
+                    |                                        |
+                    +--------------+---------+--------------+
+                                   |  eth1   |
+                                   |10.255.255.1|
+                                   +----+----+
+                                        |
+                    +-------------------+---------------------+
+                    |      Internal Network (10.255.255.0/24) |
+                    |           (Isolated / No Internet)      |
+                    |                                         |
+                    |  +----------+  +----------+  +-------+  |
+                    |  | Agent VM |  | Agent VM |  | Agent |  |
+                    |  |  .10     |  |  .11     |  | .12   |  |
+                    |  +----------+  +----------+  +-------+  |
+                    +-----------------------------------------+
 ```
 
-The proxy runs two servers:
-- **Proxy server** (default `:8080`) - Handles agent HTTP requests and HTTPS CONNECT with TLS MITM inspection
-- **Admin server** (default `:443`) - Serves the admin UI and REST API over HTTPS (always TLS)
+### Traffic Flow
 
-On first startup, the proxy:
-1. Generates a **CA certificate** (`data/ca.crt` + `data/ca.key`) used for signing per-host TLS certificates during MITM inspection
-2. Generates a **self-signed certificate** for the admin UI (or uses user-provided cert/key)
+```
+Agent VM                      Firewall4AI VM                   Internet
+    |                               |                               |
+    |  curl http://api.com/data     |                               |
+    | ------ TCP :80 -------------> |                               |
+    |     (iptables REDIRECT:8080)  |                               |
+    |                               | --- check approval -------->  |
+    |                               | <-- if approved, forward -->  |
+    | <---- HTTP response --------- |                               |
+    |                               |                               |
+    |  curl https://api.com/data    |                               |
+    | ------ TCP :443 ------------> |                               |
+    |     (iptables REDIRECT:8443)  |                               |
+    | <---- TLS (MITM cert) ------- |                               |
+    | ------ HTTP inside TLS -----> |                               |
+    |                               | --- TLS to real host -------> |
+    |                               | <-- response ---------------- |
+    | <---- response --------------- |                               |
+    |                               |                               |
+    | Agents need NO proxy config!  |  All traffic is intercepted.  |
+```
 
-State is persisted to a JSON file in the data directory.
+### Firewall Rules Summary
+
+| Direction | From | To | Rule |
+|-----------|------|----|------|
+| Agent -> Firewall4AI | eth1 | DNS (:53) | ACCEPT |
+| Agent -> Firewall4AI | eth1 | DHCP (:67) | ACCEPT |
+| Agent -> Firewall4AI | eth1 | Proxy (:8080) | ACCEPT |
+| Agent -> Firewall4AI | eth1 | Transparent TLS (:8443) | ACCEPT |
+| Agent -> Firewall4AI | eth1 | ICMP | ACCEPT |
+| Agent -> Firewall4AI | eth1 | anything else | REJECT |
+| Agent -> Internet | eth1 | FORWARD | REJECT |
+| External -> Firewall4AI | eth0 | any | ACCEPT |
+| NAT | eth1 :80 | REDIRECT :8080 | Transparent HTTP |
+| NAT | eth1 :443 | REDIRECT :8443 | Transparent HTTPS |
 
 ## Quick Start
 Download a pre-built VM image from the [Releases](../../releases) page:
@@ -53,15 +120,17 @@ The VM is a minimal Alpine Linux appliance that runs Firewall4AI as the main ser
 **What's included:**
 - **DHCP server** on eth1 serving `10.255.255.10` - `10.255.255.254` to agents
 - **DNS server** (dnsmasq) forwarding to `1.1.1.1` and `1.0.0.1`
-- **iptables firewall** that blocks all direct internet access from the agent network -- agents can only reach the proxy (port 8080) and admin UI (port 443)
+- **iptables firewall** with transparent proxy redirect - agents need no proxy configuration
 - **TLS MITM inspection** with auto-generated CA certificate
 
 **Setup:**
 1. Create a VM with 2 NICs: one bridged/NAT to the internet, one on an isolated internal network
 2. Boot the VM from the downloaded disk image
-3. Access the admin UI at `https://10.255.255.1:443` from the agent network
-4. Download the CA cert at `https://10.255.255.1:443/ca.crt` and install it on agent machines
-5. Configure agents to use `http://10.255.255.1:8080` as their HTTP proxy
+3. Download the CA cert at `https://10.255.255.1:443/ca.crt` and install it on agent machines
+4. Access the admin UI at `https://10.255.255.1:443`
+5. Agents can now make HTTP/HTTPS requests normally - all traffic is intercepted and routed through the approval system
+
+**No proxy configuration needed on agent VMs** - the transparent proxy intercepts all traffic automatically.
 
 Default root password: `firewall4ai` (change after first login via serial console or SSH)
 
@@ -72,6 +141,7 @@ Create a `config.json` file (all fields optional):
 {
   "listen_addr": ":8080",
   "admin_addr": ":443",
+  "transparent_tls_addr": ":8443",
   "data_dir": "./data",
   "tls_cert_file": "",
   "tls_key_file": "",
@@ -81,8 +151,9 @@ Create a `config.json` file (all fields optional):
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `listen_addr` | `:8080` | Proxy server listen address |
+| `listen_addr` | `:8080` | Proxy server listen address (HTTP proxy + transparent HTTP) |
 | `admin_addr` | `:443` | Admin UI/API listen address (always HTTPS) |
+| `transparent_tls_addr` | `:8443` | Transparent TLS interception listener (iptables redirects :443 here) |
 | `data_dir` | `./data` | Directory for persistent state and CA certificate |
 | `tls_cert_file` | (empty) | Custom TLS certificate for admin server (auto-generated if empty) |
 | `tls_key_file` | (empty) | Custom TLS key for admin server (auto-generated if empty) |
@@ -119,27 +190,51 @@ export SSL_CERT_FILE=data/ca.crt
 ```
 
 ## Usage
-### 1. Create a Skill
+
+### Transparent Mode (No Configuration Required)
+Once agents trust the CA certificate, all HTTP/HTTPS traffic is intercepted automatically:
+
+```bash
+# On the agent VM - just make normal requests:
+curl http://api.example.com/data      # Intercepted via iptables :80 -> :8080
+curl https://api.example.com/data     # Intercepted via iptables :443 -> :8443
+```
+
+The admin UI will show pending approval requests. Approve them globally (for all agents) or create skills for per-agent control.
+
+### Skill-Based Access (Optional)
+For fine-grained control, create skills and assign tokens to specific agents:
+
+#### 1. Create a Skill
 Via the admin UI or API:
+```bash
+curl -k -X POST https://localhost:443/api/skills \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "Web Scraper Agent", "allowed_hosts": ["api.example.com"]}'
+```
+
+This returns a GUID token and auto-generated skill ID. Skills can also have a custom ID:
 ```bash
 curl -k -X POST https://localhost:443/api/skills \
   -H 'Content-Type: application/json' \
   -d '{"id": "web-scraper", "name": "Web Scraper Agent", "allowed_hosts": ["api.example.com"]}'
 ```
 
-This returns a token that the AI agent must use for authentication.
-
-### 2. Configure the AI Agent
-Set the agent's HTTP proxy to `http://localhost:8080` and include the token header in all requests:
+#### 2. Configure the AI Agent (Optional)
+Agents can include the token in HTTP headers for skill-specific authentication:
 ```
-X-Firewall4AI-Token: <skill-token>
+X-Firewall4AI-Token: <skill-token-guid>
 ```
-The agent's environment must also trust the Firewall4AI CA (see above).
 
-### 3. Approve Connections
-When an agent tries to connect to a host not in its pre-approved list, the request blocks and appears in the admin UI as pending. An admin can approve or deny it.
+This works in both transparent mode (header in the HTTP request) and explicit proxy mode. Agents without a token are treated as anonymous and go through global approvals.
 
-### 4. Credential Injection (Optional)
+#### 3. Approve Connections
+When an agent tries to connect to a host not in its pre-approved list, the request blocks and appears in the admin UI as pending. An admin can:
+- **Approve** - Allow for this specific skill
+- **Approve Global** - Allow for all agents (with or without skill tokens)
+- **Deny** - Block the connection
+
+#### 4. Credential Injection (Optional)
 Configure credentials in the admin UI to automatically inject authentication into outgoing requests. This works for **both HTTP and HTTPS** thanks to TLS MITM inspection. Supported injection types:
 - **Custom Header** - Set any header (e.g., `X-API-Key`)
 - **Bearer Token** - Sets `Authorization: Bearer <token>`
@@ -148,12 +243,21 @@ Configure credentials in the admin UI to automatically inject authentication int
 
 Credentials can be scoped to specific hosts (with wildcard support like `*.example.com`) and specific skills.
 
+### Explicit Proxy Mode (Backward Compatible)
+Agents can still be configured to use the proxy explicitly if preferred:
+```bash
+export HTTP_PROXY=http://10.255.255.1:8080
+export HTTPS_PROXY=http://10.255.255.1:8080
+```
+
+Both transparent and explicit proxy modes work simultaneously.
+
 ## API Reference
 ### Skills
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/skills` | List all skills |
-| `POST` | `/api/skills` | Create a skill |
+| `POST` | `/api/skills` | Create a skill (ID auto-generated if omitted, token is GUID) |
 | `PUT` | `/api/skills` | Update a skill |
 | `DELETE` | `/api/skills?id=<id>` | Delete a skill |
 
@@ -162,7 +266,7 @@ Credentials can be scoped to specific hosts (with wildcard support like `*.examp
 |--------|------|-------------|
 | `GET` | `/api/approvals` | List all approvals |
 | `GET` | `/api/approvals/pending` | List pending approvals |
-| `POST` | `/api/approvals/decide` | Approve or deny a host |
+| `POST` | `/api/approvals/decide` | Approve or deny a host (use empty `skill_id` for global) |
 
 ### Credentials
 | Method | Path | Description |

@@ -75,11 +75,21 @@ func extractHost(r *http.Request) string {
 	return host
 }
 
-// authenticate extracts and validates the skill token.
-func (p *Proxy) authenticate(r *http.Request) (*auth.Skill, error) {
+// getSkillID returns the skill ID or empty string for nil skills.
+func getSkillID(skill *auth.Skill) string {
+	if skill == nil {
+		return ""
+	}
+	return skill.ID
+}
+
+// authenticateOptional extracts and validates the skill token.
+// Returns (nil, nil) if no token is provided (anonymous access).
+// Returns (nil, error) if an invalid token is provided.
+func (p *Proxy) authenticateOptional(r *http.Request) (*auth.Skill, error) {
 	token := r.Header.Get(AuthHeader)
 	if token == "" {
-		return nil, fmt.Errorf("missing %s header", AuthHeader)
+		return nil, nil
 	}
 	skill, ok := p.Skills.Authenticate(token)
 	if !ok {
@@ -88,17 +98,32 @@ func (p *Proxy) authenticate(r *http.Request) (*auth.Skill, error) {
 	return skill, nil
 }
 
-// checkApproval verifies the host is approved for this skill.
+// checkApproval verifies the host is approved. Works with both authenticated
+// and anonymous (nil skill) requests. Checks global approvals first, then
+// skill-specific approvals.
 func (p *Proxy) checkApproval(host string, skill *auth.Skill) approval.Status {
-	// Check if host is pre-approved in skill config.
-	if p.Skills.IsHostPreApproved(skill.Token, host) {
+	// Check pre-approved hosts for authenticated requests.
+	if skill != nil && p.Skills.IsHostPreApproved(skill.Token, host) {
 		return approval.StatusApproved
 	}
 
-	status := p.Approvals.Check(host, skill.ID)
+	// Check global approval (host approved/denied for all agents).
+	if globalStatus, exists := p.Approvals.CheckExisting(host, ""); exists && globalStatus != approval.StatusPending {
+		return globalStatus
+	}
+
+	// Check skill-specific approval.
+	if skill != nil {
+		if skillStatus, exists := p.Approvals.CheckExisting(host, skill.ID); exists && skillStatus != approval.StatusPending {
+			return skillStatus
+		}
+	}
+
+	// No decision found. Register as pending and wait.
+	sid := getSkillID(skill)
+	status := p.Approvals.Check(host, sid)
 	if status == approval.StatusPending {
-		// Block and wait for admin decision.
-		status = p.Approvals.WaitForDecision(host, skill.ID, p.ApprovalTimeout)
+		status = p.Approvals.WaitForDecision(host, sid, p.ApprovalTimeout)
 	}
 	return status
 }
@@ -107,7 +132,7 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	host := extractHost(r)
 
-	skill, err := p.authenticate(r)
+	skill, err := p.authenticateOptional(r)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
 			Method: r.Method,
@@ -120,13 +145,15 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sid := getSkillID(skill)
+
 	// Remove our custom header before forwarding.
 	r.Header.Del(AuthHeader)
 
 	status := p.checkApproval(host, skill)
 	if status != approval.StatusApproved {
 		p.Logger.Add(proxylog.Entry{
-			SkillID: skill.ID,
+			SkillID: sid,
 			Method:  r.Method,
 			Host:    host,
 			Path:    r.URL.Path,
@@ -138,7 +165,7 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Inject credentials.
-	p.Credentials.InjectForRequest(r, skill.ID)
+	p.Credentials.InjectForRequest(r, sid)
 
 	// Forward the request.
 	r.RequestURI = ""
@@ -152,7 +179,7 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	resp, err := p.Transport.RoundTrip(r)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
-			SkillID:  skill.ID,
+			SkillID:  sid,
 			Method:   r.Method,
 			Host:     host,
 			Path:     r.URL.Path,
@@ -166,7 +193,7 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	p.Logger.Add(proxylog.Entry{
-		SkillID:  skill.ID,
+		SkillID:  sid,
 		Method:   r.Method,
 		Host:     host,
 		Path:     r.URL.Path,
@@ -193,7 +220,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		host = h
 	}
 
-	skill, err := p.authenticate(r)
+	skill, err := p.authenticateOptional(r)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
 			Method: "CONNECT",
@@ -208,7 +235,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	status := p.checkApproval(host, skill)
 	if status != approval.StatusApproved {
 		p.Logger.Add(proxylog.Entry{
-			SkillID: skill.ID,
+			SkillID: getSkillID(skill),
 			Method:  "CONNECT",
 			Host:    host,
 			Status:  string(status),
@@ -249,13 +276,13 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *auth.Skill, start time.Time) {
 	defer clientConn.Close()
 
+	sid := getSkillID(skill)
+
 	// Present a CA-signed certificate for this host to the client.
-	// We create a custom GetCertificate that falls back to the known host
-	// when the client doesn't send SNI (e.g. connecting by IP address).
 	hostCert, err := p.CA.GenerateHostCert(host)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
-			SkillID: skill.ID,
+			SkillID: sid,
 			Method:  "CONNECT",
 			Host:    host,
 			Status:  "error",
@@ -276,7 +303,7 @@ func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *
 	tlsClientConn := tls.Server(clientConn, tlsConfig)
 	if err := tlsClientConn.Handshake(); err != nil {
 		p.Logger.Add(proxylog.Entry{
-			SkillID: skill.ID,
+			SkillID: sid,
 			Method:  "CONNECT",
 			Host:    host,
 			Status:  "error",
@@ -287,7 +314,7 @@ func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *
 	defer tlsClientConn.Close()
 
 	p.Logger.Add(proxylog.Entry{
-		SkillID:  skill.ID,
+		SkillID:  sid,
 		Method:   "CONNECT",
 		Host:     host,
 		Status:   "allowed",
@@ -302,7 +329,7 @@ func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *
 		if err != nil {
 			if err != io.EOF {
 				p.Logger.Add(proxylog.Entry{
-					SkillID: skill.ID,
+					SkillID: sid,
 					Method:  "CONNECT",
 					Host:    host,
 					Status:  "error",
@@ -319,6 +346,7 @@ func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *
 // handleMITMRequest processes a single HTTP request read from the MITM'd TLS connection.
 func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, targetAddr string, skill *auth.Skill) {
 	start := time.Now()
+	sid := getSkillID(skill)
 
 	// Remove proxy auth header if client re-sent it inside the tunnel.
 	req.Header.Del(AuthHeader)
@@ -332,12 +360,12 @@ func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, 
 	req.RequestURI = ""
 
 	// Inject credentials for HTTPS requests.
-	p.Credentials.InjectForRequest(req, skill.ID)
+	p.Credentials.InjectForRequest(req, sid)
 
 	resp, err := p.Transport.RoundTrip(req)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
-			SkillID:  skill.ID,
+			SkillID:  sid,
 			Method:   req.Method,
 			Host:     host,
 			Path:     req.URL.Path,
@@ -358,7 +386,7 @@ func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, 
 	defer resp.Body.Close()
 
 	p.Logger.Add(proxylog.Entry{
-		SkillID:  skill.ID,
+		SkillID:  sid,
 		Method:   req.Method,
 		Host:     host,
 		Path:     req.URL.Path,
@@ -377,10 +405,12 @@ func (p *Proxy) handleBlindTunnel(clientConn net.Conn, host, targetAddr string, 
 		targetAddr += ":443"
 	}
 
+	sid := getSkillID(skill)
+
 	targetConn, err := net.DialTimeout("tcp", targetAddr, 10*time.Second)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
-			SkillID:  skill.ID,
+			SkillID:  sid,
 			Method:   "CONNECT",
 			Host:     host,
 			Status:   "error",
@@ -392,7 +422,7 @@ func (p *Proxy) handleBlindTunnel(clientConn net.Conn, host, targetAddr string, 
 	}
 
 	p.Logger.Add(proxylog.Entry{
-		SkillID:  skill.ID,
+		SkillID:  sid,
 		Method:   "CONNECT",
 		Host:     host,
 		Status:   "allowed",
@@ -411,4 +441,165 @@ func (p *Proxy) handleBlindTunnel(clientConn net.Conn, host, targetAddr string, 
 		defer clientConn.Close()
 		io.Copy(clientConn, targetConn)
 	}()
+}
+
+// HandleTransparentTLS handles a raw TCP connection redirected by iptables
+// for transparent HTTPS interception. It terminates TLS using SNI to
+// determine the target host, then reads and forwards HTTP requests.
+func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
+	defer clientConn.Close()
+
+	if p.CA == nil {
+		return
+	}
+
+	var sniHost string
+
+	tlsConfig := &tls.Config{
+		GetCertificate: func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			sniHost = info.ServerName
+			if sniHost == "" {
+				return nil, fmt.Errorf("no SNI provided for transparent TLS")
+			}
+			return p.CA.GenerateHostCert(sniHost)
+		},
+		MinVersion: tls.VersionTLS12,
+	}
+
+	tlsConn := tls.Server(clientConn, tlsConfig)
+	if err := tlsConn.Handshake(); err != nil {
+		p.Logger.Add(proxylog.Entry{
+			Method: "TRANSPARENT",
+			Status: "error",
+			Detail: "TLS handshake failed: " + err.Error(),
+		})
+		return
+	}
+	defer tlsConn.Close()
+
+	if sniHost == "" {
+		return
+	}
+
+	// Read HTTP requests from the decrypted connection.
+	reader := bufio.NewReader(tlsConn)
+	for {
+		req, err := http.ReadRequest(reader)
+		if err != nil {
+			if err != io.EOF {
+				p.Logger.Add(proxylog.Entry{
+					Method: "TRANSPARENT",
+					Host:   sniHost,
+					Status: "error",
+					Detail: "read request: " + err.Error(),
+				})
+			}
+			return
+		}
+
+		p.handleTransparentTLSRequest(tlsConn, req, sniHost)
+	}
+}
+
+// handleTransparentTLSRequest processes a single HTTP request from a
+// transparent TLS connection.
+func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Request, host string) {
+	start := time.Now()
+
+	// Authenticate (optional in transparent mode).
+	skill, err := p.authenticateOptional(req)
+	if err != nil {
+		p.Logger.Add(proxylog.Entry{
+			Method: req.Method,
+			Host:   host,
+			Path:   req.URL.Path,
+			Status: "denied",
+			Detail: "auth failed: " + err.Error(),
+		})
+		resp := &http.Response{
+			StatusCode: http.StatusProxyAuthRequired,
+			ProtoMajor: 1,
+			ProtoMinor: 1,
+			Header:     make(http.Header),
+		}
+		resp.Write(clientConn)
+		return
+	}
+
+	sid := getSkillID(skill)
+	req.Header.Del(AuthHeader)
+
+	status := p.checkApproval(host, skill)
+	if status != approval.StatusApproved {
+		p.Logger.Add(proxylog.Entry{
+			SkillID: sid,
+			Method:  req.Method,
+			Host:    host,
+			Path:    req.URL.Path,
+			Status:  string(status),
+			Detail:  "host not approved",
+		})
+		resp := &http.Response{
+			StatusCode: http.StatusForbidden,
+			ProtoMajor: 1,
+			ProtoMinor: 1,
+			Header:     make(http.Header),
+		}
+		resp.Write(clientConn)
+		return
+	}
+
+	// Set URL for forwarding to the real backend.
+	req.URL.Scheme = "https"
+	req.URL.Host = host + ":443"
+	req.RequestURI = ""
+
+	// Inject credentials.
+	p.Credentials.InjectForRequest(req, sid)
+
+	resp, err := p.Transport.RoundTrip(req)
+	if err != nil {
+		p.Logger.Add(proxylog.Entry{
+			SkillID:  sid,
+			Method:   req.Method,
+			Host:     host,
+			Path:     req.URL.Path,
+			Status:   "error",
+			Detail:   err.Error(),
+			Duration: time.Since(start).Milliseconds(),
+		})
+		resp502 := &http.Response{
+			StatusCode: http.StatusBadGateway,
+			ProtoMajor: 1,
+			ProtoMinor: 1,
+			Header:     make(http.Header),
+		}
+		resp502.Write(clientConn)
+		return
+	}
+	defer resp.Body.Close()
+
+	p.Logger.Add(proxylog.Entry{
+		SkillID:  sid,
+		Method:   req.Method,
+		Host:     host,
+		Path:     req.URL.Path,
+		Status:   "allowed",
+		Detail:   fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
+		Duration: time.Since(start).Milliseconds(),
+	})
+
+	resp.Write(clientConn)
+}
+
+// ServeTransparentTLS accepts connections from the given listener and handles
+// them as transparent TLS interceptions.
+func (p *Proxy) ServeTransparentTLS(listener net.Listener) {
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		go p.HandleTransparentTLS(conn)
+	}
 }

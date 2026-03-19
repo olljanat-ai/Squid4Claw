@@ -45,6 +45,19 @@ func NewManager() *Manager {
 	}
 }
  
+// CheckExisting returns the current status for a host+skill without creating
+// a pending entry. Returns the status and whether an entry exists.
+func (m *Manager) CheckExisting(host, skillID string) (Status, bool) {
+	k := key(host, skillID)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	a, ok := m.approvals[k]
+	if !ok {
+		return "", false
+	}
+	return a.Status, true
+}
+
 // Check returns the current status for a host+skill, or StatusPending if unknown.
 // If the host is new, it registers it as pending.
 func (m *Manager) Check(host, skillID string) Status {

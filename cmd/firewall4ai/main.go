@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -135,14 +136,25 @@ func main() {
 		WriteTimeout: 60 * time.Second,
 	}
 
-	// Start servers.
+	// Start proxy server.
 	go func() {
-		log.Printf("Proxy server listening on %s", cfg.ListenAddr)
+		log.Printf("Proxy server listening on %s (HTTP proxy + transparent HTTP)", cfg.ListenAddr)
 		if err := proxyServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Proxy server error: %v", err)
 		}
 	}()
 
+	// Start transparent TLS listener for iptables-redirected HTTPS traffic.
+	transparentListener, err := net.Listen("tcp", cfg.TransparentTLSAddr)
+	if err != nil {
+		log.Fatalf("Failed to start transparent TLS listener: %v", err)
+	}
+	go func() {
+		log.Printf("Transparent TLS listener on %s (iptables REDIRECT :443 -> %s)", cfg.TransparentTLSAddr, cfg.TransparentTLSAddr)
+		p.ServeTransparentTLS(transparentListener)
+	}()
+
+	// Start admin server.
 	go func() {
 		log.Printf("Admin UI listening on https://localhost%s", cfg.AdminAddr)
 		// Always use TLS for admin - either user-provided or auto-generated.
@@ -165,6 +177,7 @@ func main() {
 		log.Printf("Error saving state on shutdown: %v", err)
 	}
 
+	transparentListener.Close()
 	proxyServer.Shutdown(ctx)
 	adminServer.Shutdown(ctx)
 	log.Println("Stopped.")

@@ -111,6 +111,9 @@ func (h *Handler) createSkill(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
+	if req.ID == "" {
+		req.ID = auth.GenerateGUID()
+	}
 	token, err := auth.GenerateToken()
 	if err != nil {
 		http.Error(w, "failed to generate token", http.StatusInternalServerError)
