@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -9,12 +10,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/olljanat-ai/squid4claw/internal/api"
 	"github.com/olljanat-ai/squid4claw/internal/approval"
 	"github.com/olljanat-ai/squid4claw/internal/auth"
+	"github.com/olljanat-ai/squid4claw/internal/certgen"
 	"github.com/olljanat-ai/squid4claw/internal/config"
 	"github.com/olljanat-ai/squid4claw/internal/credentials"
 	proxylog "github.com/olljanat-ai/squid4claw/internal/logging"
@@ -28,9 +31,9 @@ var Version = "dev"
 
 // storeData holds the persisted state.
 type storeData struct {
-	Skills    []auth.Skill              `json:"skills"`
-	Approvals []approval.HostApproval   `json:"approvals"`
-	Creds     []credentials.Credential  `json:"credentials"`
+	Skills    []auth.Skill             `json:"skills"`
+	Approvals []approval.HostApproval  `json:"approvals"`
+	Creds     []credentials.Credential `json:"credentials"`
 }
 
 func main() {
@@ -54,6 +57,14 @@ func main() {
 		log.Fatalf("Failed to initialize store: %v", err)
 	}
 
+	// Generate or load CA for TLS MITM inspection.
+	ca, err := certgen.LoadOrGenerateCA(cfg.DataDir)
+	if err != nil {
+		log.Fatalf("Failed to initialize CA: %v", err)
+	}
+	log.Printf("CA certificate: %s", filepath.Join(cfg.DataDir, "ca.crt"))
+	log.Printf("Agents must trust this CA for HTTPS inspection to work")
+
 	// Initialize components.
 	skills := auth.NewSkillStore()
 	approvals := approval.NewManager()
@@ -75,8 +86,9 @@ func main() {
 		})
 	}
 
-	// Setup proxy server.
+	// Setup proxy server with CA for MITM.
 	p := proxy.New(skills, approvals, creds, logger)
+	p.CA = ca
 	proxyServer := &http.Server{
 		Addr:         cfg.ListenAddr,
 		Handler:      p,
@@ -95,6 +107,13 @@ func main() {
 	}
 	apiHandler.RegisterRoutes(adminMux)
 
+	// Serve CA certificate for download.
+	adminMux.HandleFunc("GET /ca.crt", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-x509-ca-cert")
+		w.Header().Set("Content-Disposition", "attachment; filename=squid4claw-ca.crt")
+		w.Write(ca.CertPEM)
+	})
+
 	// Serve embedded static files.
 	staticFS, err := fs.Sub(web.StaticFiles, "static")
 	if err != nil {
@@ -102,9 +121,16 @@ func main() {
 	}
 	adminMux.Handle("GET /", http.FileServer(http.FS(staticFS)))
 
+	// Setup admin server TLS.
+	adminTLSConfig, err := adminTLS(cfg, ca)
+	if err != nil {
+		log.Fatalf("Failed to setup admin TLS: %v", err)
+	}
+
 	adminServer := &http.Server{
 		Addr:         cfg.AdminAddr,
 		Handler:      adminMux,
+		TLSConfig:    adminTLSConfig,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 60 * time.Second,
 	}
@@ -118,15 +144,10 @@ func main() {
 	}()
 
 	go func() {
-		log.Printf("Admin UI listening on %s", cfg.AdminAddr)
-		if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
-			if err := adminServer.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("Admin server error: %v", err)
-			}
-		} else {
-			if err := adminServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("Admin server error: %v", err)
-			}
+		log.Printf("Admin UI listening on https://localhost%s", cfg.AdminAddr)
+		// Always use TLS for admin - either user-provided or auto-generated.
+		if err := adminServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Admin server error: %v", err)
 		}
 	}()
 
@@ -147,4 +168,32 @@ func main() {
 	proxyServer.Shutdown(ctx)
 	adminServer.Shutdown(ctx)
 	log.Println("Stopped.")
+}
+
+// adminTLS returns a TLS config for the admin server. If the user provided
+// cert/key files, those are used. Otherwise a self-signed certificate is
+// auto-generated.
+func adminTLS(cfg config.Config, ca *certgen.CA) (*tls.Config, error) {
+	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("load admin TLS cert: %w", err)
+		}
+		log.Printf("Admin UI using provided TLS certificate")
+		return &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		}, nil
+	}
+
+	// Auto-generate a self-signed cert for admin UI.
+	cert, err := certgen.GenerateAdminCert()
+	if err != nil {
+		return nil, fmt.Errorf("generate admin cert: %w", err)
+	}
+	log.Printf("Admin UI using auto-generated self-signed TLS certificate")
+	return &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}, nil
 }
