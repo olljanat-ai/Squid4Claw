@@ -61,6 +61,23 @@ func TestExtractHost(t *testing.T) {
 	}
 }
 
+func TestExtractSourceIP(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"10.255.255.10:12345", "10.255.255.10"},
+		{"192.168.1.1:80", "192.168.1.1"},
+		{"127.0.0.1", "127.0.0.1"},
+	}
+	for _, tt := range tests {
+		got := extractSourceIP(tt.input)
+		if got != tt.want {
+			t.Errorf("extractSourceIP(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
 func TestProxy_NoAuthHeader_Anonymous(t *testing.T) {
 	p, _, _ := setupProxy(t)
 	req := httptest.NewRequest("GET", "http://example.com/test", nil)
@@ -127,7 +144,7 @@ func TestProxy_PreApprovedHost(t *testing.T) {
 func TestProxy_ApprovedHost(t *testing.T) {
 	p, skills, approvals := setupProxy(t)
 	skills.AddSkill(auth.Skill{ID: "s1", Token: "tok-1", Active: true})
-	approvals.Decide("target.example.com", "s1", approval.StatusApproved, "ok")
+	approvals.Decide("target.example.com", "s1", "", approval.StatusApproved, "ok")
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -148,8 +165,8 @@ func TestProxy_ApprovedHost(t *testing.T) {
 func TestProxy_GlobalApproval(t *testing.T) {
 	p, _, approvals := setupProxy(t)
 
-	// Globally approve a host (empty skillID).
-	approvals.Decide("global.example.com", "", approval.StatusApproved, "global")
+	// Globally approve a host (empty skillID, empty sourceIP).
+	approvals.Decide("global.example.com", "", "", approval.StatusApproved, "global")
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -172,7 +189,7 @@ func TestProxy_GlobalApproval_WithSkill(t *testing.T) {
 	skills.AddSkill(auth.Skill{ID: "s1", Token: "tok-1", Active: true})
 
 	// Globally approve a host.
-	approvals.Decide("global.example.com", "", approval.StatusApproved, "global")
+	approvals.Decide("global.example.com", "", "", approval.StatusApproved, "global")
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -188,6 +205,29 @@ func TestProxy_GlobalApproval_WithSkill(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200 for globally approved host (with skill), got %d", w.Code)
+	}
+}
+
+func TestProxy_VMSpecificApproval(t *testing.T) {
+	p, _, approvals := setupProxy(t)
+
+	// Approve for a specific VM IP.
+	approvals.Decide("vm.example.com", "", "10.255.255.10", approval.StatusApproved, "vm ok")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	// Request from the approved VM IP should pass.
+	req := httptest.NewRequest("GET", backend.URL+"/test", nil)
+	req.Host = "vm.example.com"
+	req.RemoteAddr = "10.255.255.10:12345"
+	w := httptest.NewRecorder()
+	p.handleHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for VM-approved host, got %d", w.Code)
 	}
 }
 
@@ -223,7 +263,7 @@ func TestProxy_CONNECT_NoAuth_Anonymous(t *testing.T) {
 	w := httptest.NewRecorder()
 	p.handleConnect(w, req)
 
-	// Without token, CONNECT is anonymous. No approval → timeout → 403.
+	// Without token, CONNECT is anonymous. No approval -> timeout -> 403.
 	if w.Code != http.StatusForbidden {
 		t.Errorf("expected 403 for anonymous unapproved CONNECT, got %d", w.Code)
 	}

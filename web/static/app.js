@@ -34,6 +34,12 @@ function formatSkillID(skillID) {
   return esc(skillID);
 }
 
+// --- Source IP display helper ---
+function formatSourceIP(sourceIP) {
+  if (!sourceIP) return '<span class="badge-status approved">all VMs</span>';
+  return esc(sourceIP);
+}
+
 // --- Dashboard ---
 async function loadDashboard() {
   try {
@@ -59,19 +65,21 @@ async function loadDashboard() {
     const tbody = document.getElementById('dash-pending-tbody');
     tbody.innerHTML = '';
     if (!pending || pending.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No pending approvals</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No pending approvals</td></tr>';
     } else {
       pending.slice(0, 5).forEach(a => {
         const skillDisplay = formatSkillID(a.skill_id);
+        const sourceDisplay = formatSourceIP(a.source_ip);
+        const approveBtn = `<button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>`;
+        const vmBtn = a.source_ip ? `<button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','','${esc(a.source_ip)}','approved')" title="Approve for this VM">Approve VM</button>` : '';
+        const globalBtn = (a.skill_id || a.source_ip) ? `<button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','','','approved')" title="Approve for all agents">Approve Global</button>` : '';
+        const denyBtn = `<button class="btn btn-danger btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>`;
         tbody.innerHTML += `<tr>
           <td><strong>${esc(a.host)}</strong></td>
           <td>${skillDisplay}</td>
+          <td>${sourceDisplay}</td>
           <td>${timeAgo(a.created_at)}</td>
-          <td>
-            <button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','approved')">Approve</button>
-            ${a.skill_id ? `<button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','','approved')" title="Approve for all agents">Approve Global</button>` : ''}
-            <button class="btn btn-danger btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','denied')">Deny</button>
-          </td>
+          <td>${approveBtn} ${vmBtn} ${globalBtn} ${denyBtn}</td>
         </tr>`;
       });
     }
@@ -95,7 +103,7 @@ async function loadApprovals() {
     const tbody = document.getElementById('approvals-tbody');
     tbody.innerHTML = '';
     if (!approvals || approvals.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No approval records</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No approval records</td></tr>';
       return;
     }
     approvals.sort((a, b) => {
@@ -104,17 +112,22 @@ async function loadApprovals() {
     });
     approvals.forEach(a => {
       const skillDisplay = formatSkillID(a.skill_id);
-      const globalBtn = a.skill_id && a.status === 'pending'
-        ? `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','','approved')" title="Approve for all agents">Global</button>` : '';
+      const sourceDisplay = formatSourceIP(a.source_ip);
+      const vmBtn = a.source_ip && a.status === 'pending'
+        ? `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','','${esc(a.source_ip)}','approved')" title="Approve for this VM">VM</button>` : '';
+      const globalBtn = (a.skill_id || a.source_ip) && a.status === 'pending'
+        ? `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','','','approved')" title="Approve for all agents">Global</button>` : '';
       const actions = a.status === 'pending'
-        ? `<button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','approved')">Approve</button>
+        ? `<button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+           ${vmBtn}
            ${globalBtn}
-           <button class="btn btn-danger btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','denied')">Deny</button>`
-        : `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','approved')">Approve</button>
-           <button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','denied')">Deny</button>`;
+           <button class="btn btn-danger btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>`
+        : `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+           <button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>`;
       tbody.innerHTML += `<tr>
         <td><strong>${esc(a.host)}</strong></td>
         <td>${skillDisplay}</td>
+        <td>${sourceDisplay}</td>
         <td><span class="badge-status ${a.status}">${a.status}</span></td>
         <td>${timeAgo(a.updated_at)}</td>
         <td>${actions}</td>
@@ -125,9 +138,9 @@ async function loadApprovals() {
   }
 }
 
-async function decide(host, skillID, status) {
+async function decide(host, skillID, sourceIP, status) {
   try {
-    await api('POST', '/api/approvals/decide', { host, skill_id: skillID, status });
+    await api('POST', '/api/approvals/decide', { host, skill_id: skillID, source_ip: sourceIP, status });
     // Refresh current page
     const activePage = document.querySelector('.page.active');
     if (activePage) {

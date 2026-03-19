@@ -109,7 +109,7 @@ func TestApprovals_Workflow(t *testing.T) {
 	h, mux := setupHandler(t)
 
 	// Register a pending host.
-	h.Approvals.Check("example.com", "skill-1")
+	h.Approvals.Check("example.com", "skill-1", "")
 
 	// List pending.
 	w := doRequest(mux, "GET", "/api/approvals/pending", nil)
@@ -144,6 +144,27 @@ func TestApprovals_Workflow(t *testing.T) {
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("invalid status: expected 400, got %d", w.Code)
+	}
+}
+
+func TestApprovals_VMSpecific(t *testing.T) {
+	h, mux := setupHandler(t)
+
+	// Register a pending host from a specific VM.
+	h.Approvals.Check("api.com", "", "10.255.255.10")
+
+	// Approve for that VM via API.
+	w := doRequest(mux, "POST", "/api/approvals/decide", map[string]any{
+		"host": "api.com", "source_ip": "10.255.255.10", "status": "approved", "note": "vm ok",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("decide VM: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the approval.
+	status, exists := h.Approvals.CheckExisting("api.com", "", "10.255.255.10")
+	if !exists || status != approval.StatusApproved {
+		t.Errorf("expected VM-specific approved, got %s (exists=%v)", status, exists)
 	}
 }
 

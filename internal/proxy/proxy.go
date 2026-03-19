@@ -75,6 +75,14 @@ func extractHost(r *http.Request) string {
 	return host
 }
 
+// extractSourceIP returns the IP address (without port) from a remote address string.
+func extractSourceIP(remoteAddr string) string {
+	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		return h
+	}
+	return remoteAddr
+}
+
 // getSkillID returns the skill ID or empty string for nil skills.
 func getSkillID(skill *auth.Skill) string {
 	if skill == nil {
@@ -98,32 +106,48 @@ func (p *Proxy) authenticateOptional(r *http.Request) (*auth.Skill, error) {
 	return skill, nil
 }
 
-// checkApproval verifies the host is approved. Works with both authenticated
-// and anonymous (nil skill) requests. Checks global approvals first, then
-// skill-specific approvals.
-func (p *Proxy) checkApproval(host string, skill *auth.Skill) approval.Status {
+// checkApproval verifies the host is approved using three levels:
+//  1. Global (skillID="" and sourceIP="") — applies to all agents on all VMs
+//  2. VM-specific (skillID="" and sourceIP set) — applies to all agents on that VM
+//  3. Skill-specific (skillID set) — applies to agents using that skill
+//
+// Checks are performed broadest-first. If no existing decision is found,
+// a pending entry is registered at the most specific applicable level.
+func (p *Proxy) checkApproval(host string, skill *auth.Skill, sourceIP string) approval.Status {
 	// Check pre-approved hosts for authenticated requests.
 	if skill != nil && p.Skills.IsHostPreApproved(skill.Token, host) {
 		return approval.StatusApproved
 	}
 
-	// Check global approval (host approved/denied for all agents).
-	if globalStatus, exists := p.Approvals.CheckExisting(host, ""); exists && globalStatus != approval.StatusPending {
+	// 1. Check global approval (host approved/denied for all agents).
+	if globalStatus, exists := p.Approvals.CheckExisting(host, "", ""); exists && globalStatus != approval.StatusPending {
 		return globalStatus
 	}
 
-	// Check skill-specific approval.
+	// 2. Check VM-specific approval.
+	if sourceIP != "" {
+		if vmStatus, exists := p.Approvals.CheckExisting(host, "", sourceIP); exists && vmStatus != approval.StatusPending {
+			return vmStatus
+		}
+	}
+
+	// 3. Check skill-specific approval.
 	if skill != nil {
-		if skillStatus, exists := p.Approvals.CheckExisting(host, skill.ID); exists && skillStatus != approval.StatusPending {
+		if skillStatus, exists := p.Approvals.CheckExisting(host, skill.ID, ""); exists && skillStatus != approval.StatusPending {
 			return skillStatus
 		}
 	}
 
-	// No decision found. Register as pending and wait.
+	// No decision found. Register as pending at the most specific level.
+	// Skill-specific takes precedence over VM-specific.
 	sid := getSkillID(skill)
-	status := p.Approvals.Check(host, sid)
+	pendingIP := sourceIP
+	if sid != "" {
+		pendingIP = "" // skill-level pending, not VM-level
+	}
+	status := p.Approvals.Check(host, sid, pendingIP)
 	if status == approval.StatusPending {
-		status = p.Approvals.WaitForDecision(host, sid, p.ApprovalTimeout)
+		status = p.Approvals.WaitForDecision(host, sid, pendingIP, p.ApprovalTimeout)
 	}
 	return status
 }
@@ -131,6 +155,7 @@ func (p *Proxy) checkApproval(host string, skill *auth.Skill) approval.Status {
 func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	host := extractHost(r)
+	sourceIP := extractSourceIP(r.RemoteAddr)
 
 	skill, err := p.authenticateOptional(r)
 	if err != nil {
@@ -150,7 +175,7 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Remove our custom header before forwarding.
 	r.Header.Del(AuthHeader)
 
-	status := p.checkApproval(host, skill)
+	status := p.checkApproval(host, skill, sourceIP)
 	if status != approval.StatusApproved {
 		p.Logger.Add(proxylog.Entry{
 			SkillID: sid,
@@ -219,6 +244,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
+	sourceIP := extractSourceIP(r.RemoteAddr)
 
 	skill, err := p.authenticateOptional(r)
 	if err != nil {
@@ -232,7 +258,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := p.checkApproval(host, skill)
+	status := p.checkApproval(host, skill, sourceIP)
 	if status != approval.StatusApproved {
 		p.Logger.Add(proxylog.Entry{
 			SkillID: getSkillID(skill),
@@ -262,7 +288,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 
 	// If we have a CA, perform TLS MITM inspection.
 	if p.CA != nil {
-		p.handleMITM(clientConn, host, targetHost, skill, start)
+		p.handleMITM(clientConn, host, targetHost, skill, sourceIP, start)
 		return
 	}
 
@@ -273,7 +299,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 // handleMITM performs TLS MITM: terminates the client TLS with a generated cert,
 // reads the inner HTTP requests, applies auth/approval/credential injection,
 // and forwards them to the real target over a new TLS connection.
-func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *auth.Skill, start time.Time) {
+func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *auth.Skill, sourceIP string, start time.Time) {
 	defer clientConn.Close()
 
 	sid := getSkillID(skill)
@@ -339,12 +365,12 @@ func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *
 			return
 		}
 
-		p.handleMITMRequest(tlsClientConn, req, host, targetAddr, skill)
+		p.handleMITMRequest(tlsClientConn, req, host, targetAddr, skill, sourceIP)
 	}
 }
 
 // handleMITMRequest processes a single HTTP request read from the MITM'd TLS connection.
-func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, targetAddr string, skill *auth.Skill) {
+func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, targetAddr string, skill *auth.Skill, sourceIP string) {
 	start := time.Now()
 	sid := getSkillID(skill)
 
@@ -453,6 +479,7 @@ func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
 		return
 	}
 
+	sourceIP := extractSourceIP(clientConn.RemoteAddr().String())
 	var sniHost string
 
 	tlsConfig := &tls.Config{
@@ -497,13 +524,13 @@ func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
 			return
 		}
 
-		p.handleTransparentTLSRequest(tlsConn, req, sniHost)
+		p.handleTransparentTLSRequest(tlsConn, req, sniHost, sourceIP)
 	}
 }
 
 // handleTransparentTLSRequest processes a single HTTP request from a
 // transparent TLS connection.
-func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Request, host string) {
+func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Request, host, sourceIP string) {
 	start := time.Now()
 
 	// Authenticate (optional in transparent mode).
@@ -529,7 +556,7 @@ func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Reque
 	sid := getSkillID(skill)
 	req.Header.Del(AuthHeader)
 
-	status := p.checkApproval(host, skill)
+	status := p.checkApproval(host, skill, sourceIP)
 	if status != approval.StatusApproved {
 		p.Logger.Add(proxylog.Entry{
 			SkillID: sid,

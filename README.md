@@ -8,7 +8,7 @@ Agents need **no proxy configuration** - all HTTP/HTTPS traffic is intercepted t
 
 - **Fully transparent proxy** - Agents need no proxy configuration; iptables redirects all HTTP/HTTPS traffic automatically
 - **Default-deny firewall** - All outbound connections require explicit admin approval
-- **Global and per-skill approvals** - Admin can approve hosts globally (all agents) or for specific skills only
+- **Three-level approvals** - Admin can approve hosts globally (all agents), per VM (by source IP), or per skill (for granting additional permissions)
 - **Anonymous and authenticated access** - Agents can make web calls without skill tokens; admin controls what is allowed
 - **TLS MITM inspection** - Full HTTPS inspection with auto-generated per-host certificates
 - **Skill-based authentication** - Optional per-skill GUID tokens for fine-grained access control
@@ -200,10 +200,10 @@ curl http://api.example.com/data      # Intercepted via iptables :80 -> :8080
 curl https://api.example.com/data     # Intercepted via iptables :443 -> :8443
 ```
 
-The admin UI will show pending approval requests. Approve them globally (for all agents) or create skills for per-agent control.
+The admin UI will show pending approval requests. Approve them globally (for all agents), per VM (by source IP), or create skills for granting additional permissions to specific agents.
 
 ### Skill-Based Access (Optional)
-For fine-grained control, create skills and assign tokens to specific agents:
+For granting additional permissions to specific agents, create skills and assign tokens:
 
 #### 1. Create a Skill
 Via the admin UI or API:
@@ -230,8 +230,9 @@ This works in both transparent mode (header in the HTTP request) and explicit pr
 
 #### 3. Approve Connections
 When an agent tries to connect to a host not in its pre-approved list, the request blocks and appears in the admin UI as pending. An admin can:
-- **Approve** - Allow for this specific skill
-- **Approve Global** - Allow for all agents (with or without skill tokens)
+- **Approve** - Allow at the current level (skill-specific or VM-specific)
+- **Approve VM** - Allow for all agents on that specific VM (by source IP)
+- **Approve Global** - Allow for all agents on all VMs
 - **Deny** - Block the connection
 
 #### 4. Credential Injection (Optional)
@@ -266,7 +267,7 @@ Both transparent and explicit proxy modes work simultaneously.
 |--------|------|-------------|
 | `GET` | `/api/approvals` | List all approvals |
 | `GET` | `/api/approvals/pending` | List pending approvals |
-| `POST` | `/api/approvals/decide` | Approve or deny a host (use empty `skill_id` for global) |
+| `POST` | `/api/approvals/decide` | Approve or deny a host (empty `skill_id` + empty `source_ip` = global, empty `skill_id` + `source_ip` = VM-specific) |
 
 ### Credentials
 | Method | Path | Description |
