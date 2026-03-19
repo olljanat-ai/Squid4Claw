@@ -1,7 +1,9 @@
-// Package proxy implements the transparent HTTP+HTTPS proxy with approval gates.
+// Package proxy implements the transparent HTTP+HTTPS proxy with approval gates
+// and TLS MITM inspection for HTTPS traffic.
 package proxy
- 
+
 import (
+	"bufio"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -9,19 +11,20 @@ import (
 	"net/http"
 	"strings"
 	"time"
- 
+
 	"github.com/olljanat-ai/squid4claw/internal/approval"
 	"github.com/olljanat-ai/squid4claw/internal/auth"
+	"github.com/olljanat-ai/squid4claw/internal/certgen"
 	"github.com/olljanat-ai/squid4claw/internal/credentials"
 	proxylog "github.com/olljanat-ai/squid4claw/internal/logging"
 )
- 
+
 const (
 	approvalTimeout = 5 * time.Minute
-	// Header used by AI agents to provide their skill token.
+	// AuthHeader is used by AI agents to provide their skill token.
 	AuthHeader = "X-Squid4Claw-Token"
 )
- 
+
 // Proxy is the main proxy server.
 type Proxy struct {
 	Skills          *auth.SkillStore
@@ -29,9 +32,10 @@ type Proxy struct {
 	Credentials     *credentials.Manager
 	Logger          *proxylog.Logger
 	Transport       http.RoundTripper
+	CA              *certgen.CA
 	ApprovalTimeout time.Duration
 }
- 
+
 // New creates a new Proxy with the given dependencies.
 func New(skills *auth.SkillStore, approvals *approval.Manager, creds *credentials.Manager, logger *proxylog.Logger) *Proxy {
 	return &Proxy{
@@ -49,7 +53,7 @@ func New(skills *auth.SkillStore, approvals *approval.Manager, creds *credential
 		},
 	}
 }
- 
+
 // ServeHTTP handles both HTTP requests and HTTPS CONNECT tunnels.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodConnect {
@@ -58,7 +62,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.handleHTTP(w, r)
 	}
 }
- 
+
 // extractHost returns the host (without port) from the request.
 func extractHost(r *http.Request) string {
 	host := r.Host
@@ -70,7 +74,7 @@ func extractHost(r *http.Request) string {
 	}
 	return host
 }
- 
+
 // authenticate extracts and validates the skill token.
 func (p *Proxy) authenticate(r *http.Request) (*auth.Skill, error) {
 	token := r.Header.Get(AuthHeader)
@@ -83,14 +87,14 @@ func (p *Proxy) authenticate(r *http.Request) (*auth.Skill, error) {
 	}
 	return skill, nil
 }
- 
+
 // checkApproval verifies the host is approved for this skill.
 func (p *Proxy) checkApproval(host string, skill *auth.Skill) approval.Status {
 	// Check if host is pre-approved in skill config.
 	if p.Skills.IsHostPreApproved(skill.Token, host) {
 		return approval.StatusApproved
 	}
- 
+
 	status := p.Approvals.Check(host, skill.ID)
 	if status == approval.StatusPending {
 		// Block and wait for admin decision.
@@ -98,11 +102,11 @@ func (p *Proxy) checkApproval(host string, skill *auth.Skill) approval.Status {
 	}
 	return status
 }
- 
+
 func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	host := extractHost(r)
- 
+
 	skill, err := p.authenticate(r)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
@@ -115,10 +119,10 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Proxy authentication failed: "+err.Error(), http.StatusProxyAuthRequired)
 		return
 	}
- 
+
 	// Remove our custom header before forwarding.
 	r.Header.Del(AuthHeader)
- 
+
 	status := p.checkApproval(host, skill)
 	if status != approval.StatusApproved {
 		p.Logger.Add(proxylog.Entry{
@@ -132,10 +136,10 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Access to %s is %s. Awaiting admin approval.", host, status), http.StatusForbidden)
 		return
 	}
- 
+
 	// Inject credentials.
 	p.Credentials.InjectForRequest(r, skill.ID)
- 
+
 	// Forward the request.
 	r.RequestURI = ""
 	if r.URL.Scheme == "" {
@@ -144,7 +148,7 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Host == "" {
 		r.URL.Host = r.Host
 	}
- 
+
 	resp, err := p.Transport.RoundTrip(r)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
@@ -160,7 +164,7 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
- 
+
 	p.Logger.Add(proxylog.Entry{
 		SkillID:  skill.ID,
 		Method:   r.Method,
@@ -170,7 +174,7 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		Detail:   fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
 		Duration: time.Since(start).Milliseconds(),
 	})
- 
+
 	// Copy response headers.
 	for k, vv := range resp.Header {
 		for _, v := range vv {
@@ -180,14 +184,15 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }
- 
+
 func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	host := r.Host
+	targetHost := r.Host
+	host := targetHost
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
- 
+
 	skill, err := p.authenticate(r)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
@@ -199,7 +204,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Proxy authentication failed: "+err.Error(), http.StatusProxyAuthRequired)
 		return
 	}
- 
+
 	status := p.checkApproval(host, skill)
 	if status != approval.StatusApproved {
 		p.Logger.Add(proxylog.Entry{
@@ -212,13 +217,148 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("CONNECT to %s is %s. Awaiting admin approval.", host, status), http.StatusForbidden)
 		return
 	}
- 
-	// Establish connection to target.
-	targetAddr := r.Host
+
+	// Hijack the client connection.
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
+		return
+	}
+	clientConn, _, err := hijacker.Hijack()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Send 200 OK to tell the client the tunnel is established.
+	clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+
+	// If we have a CA, perform TLS MITM inspection.
+	if p.CA != nil {
+		p.handleMITM(clientConn, host, targetHost, skill, start)
+		return
+	}
+
+	// Fallback: blind tunnel (no inspection).
+	p.handleBlindTunnel(clientConn, host, targetHost, skill, start)
+}
+
+// handleMITM performs TLS MITM: terminates the client TLS with a generated cert,
+// reads the inner HTTP requests, applies auth/approval/credential injection,
+// and forwards them to the real target over a new TLS connection.
+func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *auth.Skill, start time.Time) {
+	defer clientConn.Close()
+
+	// Present a CA-signed certificate for this host to the client.
+	tlsConfig := p.CA.TLSConfigForMITM()
+	// Pre-set ServerName so GetCertificate gets the right host even if
+	// the client doesn't send SNI (e.g. using IP).
+	tlsConfig.ServerName = host
+
+	tlsClientConn := tls.Server(clientConn, tlsConfig)
+	if err := tlsClientConn.Handshake(); err != nil {
+		p.Logger.Add(proxylog.Entry{
+			SkillID: skill.ID,
+			Method:  "CONNECT",
+			Host:    host,
+			Status:  "error",
+			Detail:  "MITM TLS handshake failed: " + err.Error(),
+		})
+		return
+	}
+	defer tlsClientConn.Close()
+
+	p.Logger.Add(proxylog.Entry{
+		SkillID:  skill.ID,
+		Method:   "CONNECT",
+		Host:     host,
+		Status:   "allowed",
+		Detail:   "TLS MITM tunnel established",
+		Duration: time.Since(start).Milliseconds(),
+	})
+
+	// Read HTTP requests from the decrypted client connection.
+	reader := bufio.NewReader(tlsClientConn)
+	for {
+		req, err := http.ReadRequest(reader)
+		if err != nil {
+			if err != io.EOF {
+				p.Logger.Add(proxylog.Entry{
+					SkillID: skill.ID,
+					Method:  "CONNECT",
+					Host:    host,
+					Status:  "error",
+					Detail:  "read request: " + err.Error(),
+				})
+			}
+			return
+		}
+
+		p.handleMITMRequest(tlsClientConn, req, host, targetAddr, skill)
+	}
+}
+
+// handleMITMRequest processes a single HTTP request read from the MITM'd TLS connection.
+func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, targetAddr string, skill *auth.Skill) {
+	start := time.Now()
+
+	// Remove proxy auth header if client re-sent it inside the tunnel.
+	req.Header.Del(AuthHeader)
+
+	// Set the URL for forwarding.
+	req.URL.Scheme = "https"
+	req.URL.Host = targetAddr
+	if !strings.Contains(targetAddr, ":") {
+		req.URL.Host = targetAddr + ":443"
+	}
+	req.RequestURI = ""
+
+	// Inject credentials for HTTPS requests.
+	p.Credentials.InjectForRequest(req, skill.ID)
+
+	resp, err := p.Transport.RoundTrip(req)
+	if err != nil {
+		p.Logger.Add(proxylog.Entry{
+			SkillID:  skill.ID,
+			Method:   req.Method,
+			Host:     host,
+			Path:     req.URL.Path,
+			Status:   "error",
+			Detail:   err.Error(),
+			Duration: time.Since(start).Milliseconds(),
+		})
+		// Send a 502 response to the client.
+		resp502 := &http.Response{
+			StatusCode: http.StatusBadGateway,
+			ProtoMajor: 1,
+			ProtoMinor: 1,
+			Header:     make(http.Header),
+		}
+		resp502.Write(clientConn)
+		return
+	}
+	defer resp.Body.Close()
+
+	p.Logger.Add(proxylog.Entry{
+		SkillID:  skill.ID,
+		Method:   req.Method,
+		Host:     host,
+		Path:     req.URL.Path,
+		Status:   "allowed",
+		Detail:   fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
+		Duration: time.Since(start).Milliseconds(),
+	})
+
+	// Write response back to client.
+	resp.Write(clientConn)
+}
+
+// handleBlindTunnel is the fallback when no CA is configured: just pipe bytes.
+func (p *Proxy) handleBlindTunnel(clientConn net.Conn, host, targetAddr string, skill *auth.Skill, start time.Time) {
 	if !strings.Contains(targetAddr, ":") {
 		targetAddr += ":443"
 	}
- 
+
 	targetConn, err := net.DialTimeout("tcp", targetAddr, 10*time.Second)
 	if err != nil {
 		p.Logger.Add(proxylog.Entry{
@@ -229,36 +369,19 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 			Detail:   err.Error(),
 			Duration: time.Since(start).Milliseconds(),
 		})
-		http.Error(w, "Failed to connect to target", http.StatusBadGateway)
+		clientConn.Close()
 		return
 	}
- 
-	// Hijack the connection.
-	hijacker, ok := w.(http.Hijacker)
-	if !ok {
-		targetConn.Close()
-		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
-		return
-	}
-	clientConn, _, err := hijacker.Hijack()
-	if err != nil {
-		targetConn.Close()
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
- 
-	// Send 200 OK to client.
-	clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
- 
+
 	p.Logger.Add(proxylog.Entry{
 		SkillID:  skill.ID,
 		Method:   "CONNECT",
 		Host:     host,
 		Status:   "allowed",
-		Detail:   "tunnel established",
+		Detail:   "blind tunnel (no TLS inspection)",
 		Duration: time.Since(start).Milliseconds(),
 	})
- 
+
 	// Bidirectional copy.
 	go func() {
 		defer targetConn.Close()
