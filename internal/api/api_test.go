@@ -168,6 +168,27 @@ func TestApprovals_VMSpecific(t *testing.T) {
 	}
 }
 
+func TestApprovals_Delete(t *testing.T) {
+	h, mux := setupHandler(t)
+
+	// Create an approval.
+	h.Approvals.Decide("delete-me.com", "", "", approval.StatusApproved, "to delete")
+
+	// Delete via API.
+	w := doRequest(mux, "DELETE", "/api/approvals", map[string]any{
+		"host": "delete-me.com",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify it's gone.
+	_, exists := h.Approvals.CheckExisting("delete-me.com", "", "")
+	if exists {
+		t.Error("expected approval to be deleted")
+	}
+}
+
 func TestCredentials_CRUD(t *testing.T) {
 	_, mux := setupHandler(t)
 

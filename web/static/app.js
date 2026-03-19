@@ -113,17 +113,25 @@ async function loadApprovals() {
     approvals.forEach(a => {
       const skillDisplay = formatSkillID(a.skill_id);
       const sourceDisplay = formatSourceIP(a.source_ip);
-      const vmBtn = a.source_ip && a.status === 'pending'
-        ? `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','','${esc(a.source_ip)}','approved')" title="Approve for this VM">VM</button>` : '';
-      const globalBtn = (a.skill_id || a.source_ip) && a.status === 'pending'
-        ? `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','','','approved')" title="Approve for all agents">Global</button>` : '';
-      const actions = a.status === 'pending'
-        ? `<button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
-           ${vmBtn}
-           ${globalBtn}
-           <button class="btn btn-danger btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>`
-        : `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
-           <button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>`;
+      const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteApproval('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}')" title="Delete rule">Delete</button>`;
+      let actions = '';
+      if (a.status === 'pending') {
+        const vmBtn = a.source_ip
+          ? `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','','${esc(a.source_ip)}','approved')" title="Approve for this VM">VM</button>` : '';
+        const globalBtn = (a.skill_id || a.source_ip)
+          ? `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','','','approved')" title="Approve for all agents">Global</button>` : '';
+        actions = `<button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+           ${vmBtn} ${globalBtn}
+           <button class="btn btn-danger btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
+           ${deleteBtn}`;
+      } else {
+        const promoteBtn = a.source_ip && !a.skill_id
+          ? `<button class="btn btn-outline btn-sm" onclick="promoteToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
+        actions = `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+           <button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
+           ${promoteBtn}
+           ${deleteBtn}`;
+      }
       tbody.innerHTML += `<tr>
         <td><strong>${esc(a.host)}</strong></td>
         <td>${skillDisplay}</td>
@@ -142,6 +150,34 @@ async function decide(host, skillID, sourceIP, status) {
   try {
     await api('POST', '/api/approvals/decide', { host, skill_id: skillID, source_ip: sourceIP, status });
     // Refresh current page
+    const activePage = document.querySelector('.page.active');
+    if (activePage) {
+      const pageId = activePage.id.replace('page-', '');
+      navigate(pageId);
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function deleteApproval(host, skillID, sourceIP) {
+  if (!confirm(`Delete rule for "${host}"?`)) return;
+  try {
+    await api('DELETE', '/api/approvals', { host, skill_id: skillID, source_ip: sourceIP });
+    const activePage = document.querySelector('.page.active');
+    if (activePage) {
+      const pageId = activePage.id.replace('page-', '');
+      navigate(pageId);
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function promoteToGlobal(host, sourceIP, status) {
+  if (!confirm(`Promote "${host}" from VM ${sourceIP} to a global rule?`)) return;
+  try {
+    await api('POST', '/api/approvals/decide', { host, skill_id: '', source_ip: '', status });
     const activePage = document.querySelector('.page.active');
     if (activePage) {
       const pageId = activePage.id.replace('page-', '');

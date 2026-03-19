@@ -29,6 +29,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/approvals", h.listApprovals)
 	mux.HandleFunc("GET /api/approvals/pending", h.listPending)
 	mux.HandleFunc("POST /api/approvals/decide", h.decideApproval)
+	mux.HandleFunc("DELETE /api/approvals", h.deleteApproval)
 
 	// Skills
 	mux.HandleFunc("GET /api/skills", h.listSkills)
@@ -90,6 +91,27 @@ func (h *Handler) decideApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Approvals.Decide(req.Host, req.SkillID, req.SourceIP, req.Status, req.Note)
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
+}
+
+type deleteApprovalRequest struct {
+	Host     string `json:"host"`
+	SkillID  string `json:"skill_id"`
+	SourceIP string `json:"source_ip"`
+}
+
+func (h *Handler) deleteApproval(w http.ResponseWriter, r *http.Request) {
+	var req deleteApprovalRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Host == "" {
+		http.Error(w, "host is required", http.StatusBadRequest)
+		return
+	}
+	h.Approvals.Delete(req.Host, req.SkillID, req.SourceIP)
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }

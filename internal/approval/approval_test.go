@@ -268,6 +268,31 @@ func TestManager_WildcardVMApproval(t *testing.T) {
 	}
 }
 
+func TestManager_Delete(t *testing.T) {
+	m := NewManager()
+	m.Decide("example.com", "", "", StatusApproved, "ok")
+
+	// Verify it exists.
+	status, exists := m.CheckExisting("example.com", "", "")
+	if !exists || status != StatusApproved {
+		t.Fatalf("expected approved, got %s (exists=%v)", status, exists)
+	}
+
+	// Delete it.
+	m.Delete("example.com", "", "")
+
+	// Should be gone.
+	_, exists = m.CheckExisting("example.com", "", "")
+	if exists {
+		t.Error("expected entry to be deleted")
+	}
+
+	// ListAll should be empty.
+	if len(m.ListAll()) != 0 {
+		t.Error("expected empty list after delete")
+	}
+}
+
 func TestManager_LoadAndExport(t *testing.T) {
 	m := NewManager()
 	m.Check("a.com", "skill-1", "")

@@ -256,6 +256,14 @@ func (m *Manager) LoadApprovals(approvals []HostApproval) {
 	}
 }
 
+// Delete removes an approval entry.
+func (m *Manager) Delete(host, skillID, sourceIP string) {
+	k := key(host, skillID, sourceIP)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.approvals, k)
+}
+
 // Export returns all approvals for persistence.
 func (m *Manager) Export() []HostApproval {
 	return m.ListAll()
