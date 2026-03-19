@@ -74,6 +74,13 @@ iptables -A INPUT -i $INTERNAL_IF -j REJECT
 iptables -A FORWARD -i $INTERNAL_IF -j REJECT
 
 # ============================================================
+# FORWARD rules: accept ALL forwarding from external network
+# to allow troubleshooting and diagnostics from the host to
+# agent VMs.
+# ============================================================
+iptables -A FORWARD -i $EXTERNAL_IF -j ACCEPT
+
+# ============================================================
 # NAT: masquerade proxy's outbound connections via eth0
 # ============================================================
 iptables -t nat -A POSTROUTING -o $EXTERNAL_IF -j MASQUERADE
