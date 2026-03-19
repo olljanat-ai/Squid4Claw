@@ -1,5 +1,5 @@
 #!/bin/sh
-# Squid4Claw network hardening rules
+# Firewall4AI network hardening rules
 # Forces all HTTP/HTTPS from the internal network (eth1/10.255.255.0/24)
 # through the proxy and blocks all other outbound traffic.
 
@@ -78,4 +78,4 @@ iptables -A FORWARD -i $INTERNAL_IF -j REJECT
 # ============================================================
 iptables -t nat -A POSTROUTING -o $EXTERNAL_IF -j MASQUERADE
 
-echo "Squid4Claw iptables rules applied"
+echo "Firewall4AI iptables rules applied"

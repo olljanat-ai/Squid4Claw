@@ -14,16 +14,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/olljanat-ai/squid4claw/internal/api"
-	"github.com/olljanat-ai/squid4claw/internal/approval"
-	"github.com/olljanat-ai/squid4claw/internal/auth"
-	"github.com/olljanat-ai/squid4claw/internal/certgen"
-	"github.com/olljanat-ai/squid4claw/internal/config"
-	"github.com/olljanat-ai/squid4claw/internal/credentials"
-	proxylog "github.com/olljanat-ai/squid4claw/internal/logging"
-	"github.com/olljanat-ai/squid4claw/internal/proxy"
-	"github.com/olljanat-ai/squid4claw/internal/store"
-	"github.com/olljanat-ai/squid4claw/web"
+	"github.com/olljanat-ai/firewall4ai/internal/api"
+	"github.com/olljanat-ai/firewall4ai/internal/approval"
+	"github.com/olljanat-ai/firewall4ai/internal/auth"
+	"github.com/olljanat-ai/firewall4ai/internal/certgen"
+	"github.com/olljanat-ai/firewall4ai/internal/config"
+	"github.com/olljanat-ai/firewall4ai/internal/credentials"
+	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
+	"github.com/olljanat-ai/firewall4ai/internal/proxy"
+	"github.com/olljanat-ai/firewall4ai/internal/store"
+	"github.com/olljanat-ai/firewall4ai/web"
 )
 
 // Version is set at build time via ldflags.
@@ -42,7 +42,7 @@ func main() {
 	flag.Parse()
 
 	if *versionFlag {
-		fmt.Println("squid4claw", Version)
+		fmt.Println("firewall4ai", Version)
 		os.Exit(0)
 	}
 
@@ -110,7 +110,7 @@ func main() {
 	// Serve CA certificate for download.
 	adminMux.HandleFunc("GET /ca.crt", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-x509-ca-cert")
-		w.Header().Set("Content-Disposition", "attachment; filename=squid4claw-ca.crt")
+		w.Header().Set("Content-Disposition", "attachment; filename=firewall4ai-ca.crt")
 		w.Write(ca.CertPEM)
 	})
 

@@ -25,8 +25,8 @@ func TestGenerateCA(t *testing.T) {
 	if !ca.Certificate.IsCA {
 		t.Error("certificate should be a CA")
 	}
-	if ca.Certificate.Subject.CommonName != "Squid4Claw CA" {
-		t.Errorf("expected CN 'Squid4Claw CA', got %q", ca.Certificate.Subject.CommonName)
+	if ca.Certificate.Subject.CommonName != "Firewall4AI CA" {
+		t.Errorf("expected CN 'Firewall4AI CA', got %q", ca.Certificate.Subject.CommonName)
 	}
 }
 
@@ -169,8 +169,8 @@ func TestGenerateAdminCert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse cert: %v", err)
 	}
-	if leaf.Subject.CommonName != "Squid4Claw Admin" {
-		t.Errorf("expected CN 'Squid4Claw Admin', got %q", leaf.Subject.CommonName)
+	if leaf.Subject.CommonName != "Firewall4AI Admin" {
+		t.Errorf("expected CN 'Firewall4AI Admin', got %q", leaf.Subject.CommonName)
 	}
 
 	// Should have localhost SANs.

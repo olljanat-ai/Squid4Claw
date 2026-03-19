@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"time"
  
-	"github.com/olljanat-ai/squid4claw/internal/approval"
-	"github.com/olljanat-ai/squid4claw/internal/auth"
-	"github.com/olljanat-ai/squid4claw/internal/credentials"
-	proxylog "github.com/olljanat-ai/squid4claw/internal/logging"
+	"github.com/olljanat-ai/firewall4ai/internal/approval"
+	"github.com/olljanat-ai/firewall4ai/internal/auth"
+	"github.com/olljanat-ai/firewall4ai/internal/credentials"
+	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 )
  
 // Handler holds dependencies for API endpoints.

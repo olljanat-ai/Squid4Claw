@@ -1,4 +1,4 @@
-// Squid4Claw Admin UI
+// Firewall4AI Admin UI
 const API = '';
 let pollInterval = null;
 let lastLogID = 0;

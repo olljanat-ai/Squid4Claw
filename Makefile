@@ -1,4 +1,4 @@
-BINARY_NAME := squid4claw
+BINARY_NAME := firewall4ai
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-s -w -X main.Version=$(VERSION)"
 GOOS := linux
@@ -9,7 +9,7 @@ GOARCH := amd64
 all: lint test build
 
 build:
-	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build $(LDFLAGS) -o bin/$(BINARY_NAME) ./cmd/squid4claw/
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build $(LDFLAGS) -o bin/$(BINARY_NAME) ./cmd/firewall4ai/
 
 test:
 	go test -race -timeout 60s ./...

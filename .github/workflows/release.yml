@@ -28,8 +28,8 @@ jobs:
           VERSION=${GITHUB_REF_NAME}
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
             -ldflags "-s -w -X main.Version=${VERSION}" \
-            -o squid4claw-linux-amd64 \
-            ./cmd/squid4claw/
+            -o firewall4ai-linux-amd64 \
+            ./cmd/firewall4ai/
 
       - name: Build VM images
         run: |
@@ -46,8 +46,8 @@ jobs:
           # Build the binary for the VM
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
             -ldflags "-s -w -X main.Version=${VERSION}" \
-            -o vm/squid4claw \
-            ./cmd/squid4claw/
+            -o vm/firewall4ai \
+            ./cmd/firewall4ai/
 
           # Build qcow2 image
           sudo ./alpine-make-vm-image \
@@ -58,30 +58,30 @@ jobs:
             --fs-skel-dir vm/rootfs \
             --script-chroot \
             -- \
-            "squid4claw-${VERSION}.qcow2" \
+            "firewall4ai-${VERSION}.qcow2" \
             vm/configure.sh
 
           # Convert to VMware vmdk
           qemu-img convert -f qcow2 -O vmdk \
             -o adapter_type=lsilogic,subformat=streamOptimized \
-            "squid4claw-${VERSION}.qcow2" "squid4claw-${VERSION}.vmdk"
+            "firewall4ai-${VERSION}.qcow2" "firewall4ai-${VERSION}.vmdk"
 
           # Convert to Hyper-V vhdx
           qemu-img convert -f qcow2 -O vhdx \
             -o subformat=dynamic \
-            "squid4claw-${VERSION}.qcow2" "squid4claw-${VERSION}.vhdx"
+            "firewall4ai-${VERSION}.qcow2" "firewall4ai-${VERSION}.vhdx"
 
           # Cleanup build artifact
-          rm -f vm/squid4claw
+          rm -f vm/firewall4ai
 
-          ls -lh squid4claw-${VERSION}.*
+          ls -lh firewall4ai-${VERSION}.*
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
-            squid4claw-linux-amd64
-            squid4claw-*.qcow2
-            squid4claw-*.vmdk
-            squid4claw-*.vhdx
+            firewall4ai-linux-amd64
+            firewall4ai-*.qcow2
+            firewall4ai-*.vmdk
+            firewall4ai-*.vhdx

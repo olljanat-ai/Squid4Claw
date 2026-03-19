@@ -81,8 +81,8 @@ func generateCA() (*CA, error) {
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   "Squid4Claw CA",
-			Organization: []string{"Squid4Claw"},
+			CommonName:   "Firewall4AI CA",
+			Organization: []string{"Firewall4AI"},
 		},
 		NotBefore:             time.Now().Add(-1 * time.Hour),
 		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
@@ -172,7 +172,7 @@ func (ca *CA) generateHostCertLocked(host string) (*tls.Certificate, error) {
 		SerialNumber: serial,
 		Subject: pkix.Name{
 			CommonName:   host,
-			Organization: []string{"Squid4Claw"},
+			Organization: []string{"Firewall4AI"},
 		},
 		NotBefore: time.Now().Add(-1 * time.Hour),
 		NotAfter:  time.Now().Add(24 * time.Hour),
@@ -217,8 +217,8 @@ func GenerateAdminCert() (tls.Certificate, error) {
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   "Squid4Claw Admin",
-			Organization: []string{"Squid4Claw"},
+			CommonName:   "Firewall4AI Admin",
+			Organization: []string{"Firewall4AI"},
 		},
 		NotBefore: time.Now().Add(-1 * time.Hour),
 		NotAfter:  time.Now().Add(365 * 24 * time.Hour),
@@ -226,7 +226,7 @@ func GenerateAdminCert() (tls.Certificate, error) {
 		ExtKeyUsage: []x509.ExtKeyUsage{
 			x509.ExtKeyUsageServerAuth,
 		},
-		DNSNames:    []string{"localhost", "squid4claw"},
+		DNSNames:    []string{"localhost", "firewall4ai"},
 		IPAddresses: []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
 	}
 

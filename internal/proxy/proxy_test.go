@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/olljanat-ai/squid4claw/internal/approval"
-	"github.com/olljanat-ai/squid4claw/internal/auth"
-	"github.com/olljanat-ai/squid4claw/internal/certgen"
-	"github.com/olljanat-ai/squid4claw/internal/credentials"
-	proxylog "github.com/olljanat-ai/squid4claw/internal/logging"
+	"github.com/olljanat-ai/firewall4ai/internal/approval"
+	"github.com/olljanat-ai/firewall4ai/internal/auth"
+	"github.com/olljanat-ai/firewall4ai/internal/certgen"
+	"github.com/olljanat-ai/firewall4ai/internal/credentials"
+	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 )
 
 func setupProxy(t *testing.T) (*Proxy, *auth.SkillStore, *approval.Manager) {

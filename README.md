@@ -1,4 +1,4 @@
-# Squid4Claw
+# Firewall4AI
 
 Transparent HTTP/HTTPS proxy for controlling where AI agents can connect from isolated environments.
 
@@ -42,11 +42,11 @@ Download a pre-built VM image from the [Releases](../../releases) page:
 
 | Format | Platform |
 |--------|----------|
-| `squid4claw-*.qcow2` | QEMU/KVM, Proxmox |
-| `squid4claw-*.vmdk` | VMware ESXi/Workstation |
-| `squid4claw-*.vhdx` | Hyper-V |
+| `firewall4ai-*.qcow2` | QEMU/KVM, Proxmox |
+| `firewall4ai-*.vmdk` | VMware ESXi/Workstation |
+| `firewall4ai-*.vhdx` | Hyper-V |
 
-The VM is a minimal Alpine Linux appliance that runs Squid4Claw as the main service with two network interfaces:
+The VM is a minimal Alpine Linux appliance that runs Firewall4AI as the main service with two network interfaces:
 
 | Interface | Configuration | Purpose |
 |-----------|--------------|---------|
@@ -66,7 +66,7 @@ The VM is a minimal Alpine Linux appliance that runs Squid4Claw as the main serv
 4. Download the CA cert at `https://10.255.255.1:443/ca.crt` and install it on agent machines
 5. Configure agents to use `http://10.255.255.1:8080` as their HTTP proxy
 
-Default root password: `squid4claw` (change after first login via serial console or SSH)
+Default root password: `firewall4ai` (change after first login via serial console or SSH)
 
 ### Option B: Standalone Binary
 
@@ -75,10 +75,10 @@ Default root password: `squid4claw` (change after first login via serial console
 make build
 
 # Run with defaults
-./bin/squid4claw
+./bin/firewall4ai
 
 # Run with config file
-./bin/squid4claw -config config.json
+./bin/firewall4ai -config config.json
 ```
 
 On first run, the CA certificate is generated at `./data/ca.crt`. You must install this CA on systems that will connect through the proxy (see [Trusting the CA Certificate](#trusting-the-ca-certificate)).
@@ -111,19 +111,19 @@ Create a `config.json` file (all fields optional):
 
 ## Trusting the CA Certificate
 
-For TLS MITM inspection to work, the AI agent's environment must trust the Squid4Claw CA. The CA certificate is at `<data_dir>/ca.crt`.
+For TLS MITM inspection to work, the AI agent's environment must trust the Firewall4AI CA. The CA certificate is at `<data_dir>/ca.crt`.
 
 ### Debian/Ubuntu
 
 ```bash
-sudo cp data/ca.crt /usr/local/share/ca-certificates/squid4claw.crt
+sudo cp data/ca.crt /usr/local/share/ca-certificates/firewall4ai.crt
 sudo update-ca-certificates
 ```
 
 ### RHEL/CentOS/Fedora
 
 ```bash
-sudo cp data/ca.crt /etc/pki/ca-trust/source/anchors/squid4claw.crt
+sudo cp data/ca.crt /etc/pki/ca-trust/source/anchors/firewall4ai.crt
 sudo update-ca-trust
 ```
 
@@ -145,19 +145,19 @@ export SSL_CERT_FILE=data/ca.crt
 
 ## Locking Down the Network with iptables
 
-To force all HTTP/HTTPS traffic from the AI agent environment through Squid4Claw and block everything else, use the following iptables rules. This assumes:
+To force all HTTP/HTTPS traffic from the AI agent environment through Firewall4AI and block everything else, use the following iptables rules. This assumes:
 
-- Squid4Claw runs on the **same host** as the agents (proxy at `127.0.0.1:8080`, admin at `127.0.0.1:443`)
-- Squid4Claw runs as user `squid4claw` (so its own outbound traffic is not blocked)
+- Firewall4AI runs on the **same host** as the agents (proxy at `127.0.0.1:8080`, admin at `127.0.0.1:443`)
+- Firewall4AI runs as user `firewall4ai` (so its own outbound traffic is not blocked)
 - The agent runs as user `agent`
 
 ```bash
 # ============================================================
-# Squid4Claw iptables lockdown rules
+# Firewall4AI iptables lockdown rules
 # ============================================================
 # Run as root. Adjust PROXY_USER, AGENT_USER, and ports as needed.
 
-PROXY_USER=squid4claw
+PROXY_USER=firewall4ai
 AGENT_USER=agent
 PROXY_PORT=8080
 ADMIN_PORT=443
@@ -192,7 +192,7 @@ iptables -A OUTPUT -m owner --uid-owner $(id -u $AGENT_USER) -p udp -j REJECT
 
 ### With separate proxy host
 
-If Squid4Claw runs on a different machine (e.g., gateway), adjust the rules for the agent host:
+If Firewall4AI runs on a different machine (e.g., gateway), adjust the rules for the agent host:
 
 ```bash
 PROXY_IP=10.0.0.1
@@ -239,7 +239,7 @@ sudo -u agent curl -x http://127.0.0.1:8080 http://example.com
 
 # Through the proxy with valid token:
 sudo -u agent curl -x http://127.0.0.1:8080 \
-  -H "X-Squid4Claw-Token: <token>" \
+  -H "X-Firewall4AI-Token: <token>" \
   --cacert data/ca.crt \
   https://example.com
 # Expected: Works if host is approved
@@ -264,10 +264,10 @@ This returns a token that the AI agent must use for authentication.
 Set the agent's HTTP proxy to `http://localhost:8080` and include the token header in all requests:
 
 ```
-X-Squid4Claw-Token: <skill-token>
+X-Firewall4AI-Token: <skill-token>
 ```
 
-The agent's environment must also trust the Squid4Claw CA (see above).
+The agent's environment must also trust the Firewall4AI CA (see above).
 
 ### 3. Approve Connections
 
@@ -347,7 +347,7 @@ cd vm
 sudo VERSION=v1.0.0 ./build.sh
 ```
 
-This produces `dist/squid4claw-v1.0.0.{qcow2,vmdk,vhdx}`.
+This produces `dist/firewall4ai-v1.0.0.{qcow2,vmdk,vhdx}`.
 
 ## Release
 

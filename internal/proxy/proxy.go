@@ -12,17 +12,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/olljanat-ai/squid4claw/internal/approval"
-	"github.com/olljanat-ai/squid4claw/internal/auth"
-	"github.com/olljanat-ai/squid4claw/internal/certgen"
-	"github.com/olljanat-ai/squid4claw/internal/credentials"
-	proxylog "github.com/olljanat-ai/squid4claw/internal/logging"
+	"github.com/olljanat-ai/firewall4ai/internal/approval"
+	"github.com/olljanat-ai/firewall4ai/internal/auth"
+	"github.com/olljanat-ai/firewall4ai/internal/certgen"
+	"github.com/olljanat-ai/firewall4ai/internal/credentials"
+	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 )
 
 const (
 	approvalTimeout = 5 * time.Minute
 	// AuthHeader is used by AI agents to provide their skill token.
-	AuthHeader = "X-Squid4Claw-Token"
+	AuthHeader = "X-Firewall4AI-Token"
 )
 
 // Proxy is the main proxy server.
