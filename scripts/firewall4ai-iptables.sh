@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Firewall4AI network hardening rules
 # Transparent proxy: all HTTP/HTTPS from agents is intercepted automatically.
 # Agents do NOT need proxy configuration - iptables redirects their traffic.
