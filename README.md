@@ -2,28 +2,35 @@
 
 Transparent HTTP/HTTPS proxy for controlling where AI agents can connect from isolated environments.
 
-Connections are **denied by default** and require admin approval before first use. AI agents authenticate with skill-specific tokens that load per-skill rulesets. The proxy can inject credentials into outgoing requests so agents never need to know secrets directly.
+Connections are **denied by default** and require admin approval before first use. AI agents authenticate with skill-specific tokens that load per-skill rulesets. The proxy performs **TLS MITM inspection** on HTTPS traffic, enabling credential injection for both HTTP and HTTPS requests so agents never need to know secrets directly.
 
 ## Features
 
 - **Default-deny proxy** - All outbound connections require explicit admin approval
+- **TLS MITM inspection** - Full HTTPS inspection with auto-generated per-host certificates, enabling credential injection and request logging for encrypted traffic
 - **Skill-based authentication** - Each AI agent skill gets its own token and ruleset
 - **Pre-approved hosts** - Configure allowed hosts per skill to skip manual approval
-- **Credential injection** - Inject API keys, bearer tokens, basic auth, or query parameters into outgoing requests on behalf of agents
-- **Admin UI** - Modern web interface for managing approvals, skills, credentials, and viewing logs
-- **Real-time logging** - All proxy requests are logged and visible in the admin UI with polling updates
+- **Credential injection** - Inject API keys, bearer tokens, basic auth, or query parameters into both HTTP and HTTPS requests on behalf of agents
+- **Auto-generated certificates** - CA and admin UI TLS certificates are generated automatically on first run
+- **Admin UI** - Modern web interface (always HTTPS) for managing approvals, skills, credentials, and viewing logs
+- **Real-time logging** - All proxy requests (including decrypted HTTPS) are logged and visible in the admin UI
 
 ## Architecture
 
 ```
-AI Agent --[HTTP/HTTPS]--> Proxy (:8080) --[approved]--> Target Service
-                             |
-                         Admin UI (:8443) <-- Human Admin
+AI Agent --[HTTP]--> Proxy (:8080) --[approved]--> Target Service
+AI Agent --[HTTPS CONNECT]--> Proxy (:8080) --[TLS MITM]--> Target Service
+                                |
+                   Admin UI (:8443/HTTPS) <-- Human Admin
 ```
 
 The proxy runs two servers:
-- **Proxy server** (default `:8080`) - Handles agent HTTP/HTTPS requests with CONNECT tunnel support
-- **Admin server** (default `:8443`) - Serves the admin UI and REST API
+- **Proxy server** (default `:8080`) - Handles agent HTTP requests and HTTPS CONNECT with TLS MITM inspection
+- **Admin server** (default `:8443`) - Serves the admin UI and REST API over HTTPS (always TLS)
+
+On first startup, the proxy:
+1. Generates a **CA certificate** (`data/ca.crt` + `data/ca.key`) used for signing per-host TLS certificates during MITM inspection
+2. Generates a **self-signed certificate** for the admin UI (or uses user-provided cert/key)
 
 State is persisted to a JSON file in the data directory.
 
@@ -39,6 +46,10 @@ make build
 # Run with config file
 ./bin/squid4claw -config config.json
 ```
+
+On first run, the CA certificate is generated at `./data/ca.crt`. You must install this CA on systems that will connect through the proxy (see [Trusting the CA Certificate](#trusting-the-ca-certificate)).
+
+The CA certificate is also available for download at `https://localhost:8443/ca.crt`.
 
 ## Configuration
 
@@ -58,11 +69,147 @@ Create a `config.json` file (all fields optional):
 | Field | Default | Description |
 |-------|---------|-------------|
 | `listen_addr` | `:8080` | Proxy server listen address |
-| `admin_addr` | `:8443` | Admin UI/API listen address |
-| `data_dir` | `./data` | Directory for persistent state |
-| `tls_cert_file` | (empty) | TLS certificate for admin server |
-| `tls_key_file` | (empty) | TLS key for admin server |
+| `admin_addr` | `:8443` | Admin UI/API listen address (always HTTPS) |
+| `data_dir` | `./data` | Directory for persistent state and CA certificate |
+| `tls_cert_file` | (empty) | Custom TLS certificate for admin server (auto-generated if empty) |
+| `tls_key_file` | (empty) | Custom TLS key for admin server (auto-generated if empty) |
 | `max_log_entries` | `10000` | Maximum log entries kept in memory |
+
+## Trusting the CA Certificate
+
+For TLS MITM inspection to work, the AI agent's environment must trust the Squid4Claw CA. The CA certificate is at `<data_dir>/ca.crt`.
+
+### Debian/Ubuntu
+
+```bash
+sudo cp data/ca.crt /usr/local/share/ca-certificates/squid4claw.crt
+sudo update-ca-certificates
+```
+
+### RHEL/CentOS/Fedora
+
+```bash
+sudo cp data/ca.crt /etc/pki/ca-trust/source/anchors/squid4claw.crt
+sudo update-ca-trust
+```
+
+### For specific tools
+
+```bash
+# curl
+curl --cacert data/ca.crt https://example.com
+
+# Python requests
+export REQUESTS_CA_BUNDLE=data/ca.crt
+
+# Node.js
+export NODE_EXTRA_CA_CERTS=data/ca.crt
+
+# Go
+export SSL_CERT_FILE=data/ca.crt
+```
+
+## Locking Down the Network with iptables
+
+To force all HTTP/HTTPS traffic from the AI agent environment through Squid4Claw and block everything else, use the following iptables rules. This assumes:
+
+- Squid4Claw runs on the **same host** as the agents (proxy at `127.0.0.1:8080`, admin at `127.0.0.1:8443`)
+- Squid4Claw runs as user `squid4claw` (so its own outbound traffic is not blocked)
+- The agent runs as user `agent`
+
+```bash
+# ============================================================
+# Squid4Claw iptables lockdown rules
+# ============================================================
+# Run as root. Adjust PROXY_USER, AGENT_USER, and ports as needed.
+
+PROXY_USER=squid4claw
+AGENT_USER=agent
+PROXY_PORT=8080
+ADMIN_PORT=8443
+
+# --- Allow the proxy process itself to make outbound connections ---
+iptables -A OUTPUT -m owner --uid-owner $(id -u $PROXY_USER) -j ACCEPT
+
+# --- Allow loopback (agent <-> proxy communication) ---
+iptables -A OUTPUT -o lo -j ACCEPT
+iptables -A INPUT -i lo -j ACCEPT
+
+# --- Allow established/related connections ---
+iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# --- Allow inbound to proxy and admin ports ---
+iptables -A INPUT -p tcp --dport $PROXY_PORT -j ACCEPT
+iptables -A INPUT -p tcp --dport $ADMIN_PORT -j ACCEPT
+
+# --- Allow DNS for the proxy user ---
+iptables -A OUTPUT -m owner --uid-owner $(id -u $PROXY_USER) -p udp --dport 53 -j ACCEPT
+iptables -A OUTPUT -m owner --uid-owner $(id -u $PROXY_USER) -p tcp --dport 53 -j ACCEPT
+
+# --- Block ALL other outbound HTTP/HTTPS from the agent ---
+iptables -A OUTPUT -m owner --uid-owner $(id -u $AGENT_USER) -p tcp --dport 80 -j REJECT
+iptables -A OUTPUT -m owner --uid-owner $(id -u $AGENT_USER) -p tcp --dport 443 -j REJECT
+
+# --- Block ALL other outbound TCP/UDP from the agent ---
+iptables -A OUTPUT -m owner --uid-owner $(id -u $AGENT_USER) -p tcp -j REJECT
+iptables -A OUTPUT -m owner --uid-owner $(id -u $AGENT_USER) -p udp -j REJECT
+```
+
+### With separate proxy host
+
+If Squid4Claw runs on a different machine (e.g., gateway), adjust the rules for the agent host:
+
+```bash
+PROXY_IP=10.0.0.1
+PROXY_PORT=8080
+ADMIN_PORT=8443
+
+# Allow connections to the proxy only
+iptables -A OUTPUT -p tcp -d $PROXY_IP --dport $PROXY_PORT -j ACCEPT
+iptables -A OUTPUT -p tcp -d $PROXY_IP --dport $ADMIN_PORT -j ACCEPT
+
+# Allow DNS
+iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
+
+# Allow established
+iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# Allow loopback
+iptables -A OUTPUT -o lo -j ACCEPT
+
+# Block everything else
+iptables -A OUTPUT -j REJECT
+```
+
+### Persisting iptables rules
+
+```bash
+# Save rules
+iptables-save > /etc/iptables/rules.v4
+
+# On Debian/Ubuntu, install iptables-persistent:
+apt install iptables-persistent
+```
+
+### Verifying the lockdown
+
+```bash
+# As the agent user, direct connections should be blocked:
+sudo -u agent curl https://example.com
+# Expected: Connection refused
+
+# Through the proxy (without token), should get 407:
+sudo -u agent curl -x http://127.0.0.1:8080 http://example.com
+# Expected: 407 Proxy Authentication Required
+
+# Through the proxy with valid token:
+sudo -u agent curl -x http://127.0.0.1:8080 \
+  -H "X-Squid4Claw-Token: <token>" \
+  --cacert data/ca.crt \
+  https://example.com
+# Expected: Works if host is approved
+```
 
 ## Usage
 
@@ -71,7 +218,7 @@ Create a `config.json` file (all fields optional):
 Via the admin UI or API:
 
 ```bash
-curl -X POST http://localhost:8443/api/skills \
+curl -k -X POST https://localhost:8443/api/skills \
   -H 'Content-Type: application/json' \
   -d '{"id": "web-scraper", "name": "Web Scraper Agent", "allowed_hosts": ["api.example.com"]}'
 ```
@@ -86,13 +233,15 @@ Set the agent's HTTP proxy to `http://localhost:8080` and include the token head
 X-Squid4Claw-Token: <skill-token>
 ```
 
+The agent's environment must also trust the Squid4Claw CA (see above).
+
 ### 3. Approve Connections
 
 When an agent tries to connect to a host not in its pre-approved list, the request blocks and appears in the admin UI as pending. An admin can approve or deny it.
 
 ### 4. Credential Injection (Optional)
 
-Configure credentials in the admin UI to automatically inject authentication into outgoing requests. Supported injection types:
+Configure credentials in the admin UI to automatically inject authentication into outgoing requests. This works for **both HTTP and HTTPS** thanks to TLS MITM inspection. Supported injection types:
 
 - **Custom Header** - Set any header (e.g., `X-API-Key`)
 - **Bearer Token** - Sets `Authorization: Bearer <token>`
@@ -133,10 +282,11 @@ Credentials can be scoped to specific hosts (with wildcard support like `*.examp
 | `GET` | `/api/logs?after=<id>` | Get log entries after a given ID |
 | `GET` | `/api/logs/stats` | Get log statistics |
 
-### Health
+### Other
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/health` | Health check |
+| `GET` | `/ca.crt` | Download CA certificate |
 
 ## Development
 
