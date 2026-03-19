@@ -1,6 +1,11 @@
 package proxy
 
 import (
+	"bufio"
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -9,6 +14,7 @@ import (
 
 	"github.com/olljanat-ai/squid4claw/internal/approval"
 	"github.com/olljanat-ai/squid4claw/internal/auth"
+	"github.com/olljanat-ai/squid4claw/internal/certgen"
 	"github.com/olljanat-ai/squid4claw/internal/credentials"
 	proxylog "github.com/olljanat-ai/squid4claw/internal/logging"
 )
@@ -22,6 +28,17 @@ func setupProxy(t *testing.T) (*Proxy, *auth.SkillStore, *approval.Manager) {
 	p := New(skills, approvals, creds, logger)
 	p.ApprovalTimeout = 50 * time.Millisecond // short timeout for tests
 	return p, skills, approvals
+}
+
+func setupProxyWithCA(t *testing.T) (*Proxy, *auth.SkillStore, *approval.Manager, *certgen.CA) {
+	t.Helper()
+	p, skills, approvals := setupProxy(t)
+	ca, err := certgen.LoadOrGenerateCA(t.TempDir())
+	if err != nil {
+		t.Fatalf("LoadOrGenerateCA() error: %v", err)
+	}
+	p.CA = ca
+	return p, skills, approvals, ca
 }
 
 func TestExtractHost(t *testing.T) {
@@ -76,7 +93,6 @@ func TestProxy_HostNotApproved(t *testing.T) {
 	w := httptest.NewRecorder()
 	p.handleHTTP(w, req)
 
-	// Host is not approved and not pre-approved => pending => denied (no waiter approves).
 	if w.Code != http.StatusForbidden {
 		t.Errorf("expected 403, got %d", w.Code)
 	}
@@ -89,7 +105,6 @@ func TestProxy_PreApprovedHost(t *testing.T) {
 		AllowedHost: []string{"target.example.com"},
 	})
 
-	// Create a backend that the proxy will forward to.
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("hello from backend"))
@@ -177,5 +192,173 @@ func TestProxy_CONNECT_HostNotApproved(t *testing.T) {
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("expected 403, got %d", w.Code)
+	}
+}
+
+// TestProxy_MITM_InspectsHTTPS verifies end-to-end MITM: the proxy terminates
+// the client TLS, reads the inner HTTP request, injects credentials, and
+// forwards to the real HTTPS backend.
+func TestProxy_MITM_InspectsHTTPS(t *testing.T) {
+	p, skills, _, ca := setupProxyWithCA(t)
+
+	var receivedAuth string
+	backend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("secure response"))
+	}))
+	defer backend.Close()
+
+	// Parse backend address.
+	backendURL, _ := url.Parse(backend.URL)
+	backendHost, backendPort, _ := net.SplitHostPort(backendURL.Host)
+	_ = backendHost
+
+	skills.AddSkill(auth.Skill{
+		ID: "s1", Token: "tok-1", Active: true,
+		AllowedHost: []string{"127.0.0.1"},
+	})
+
+	// Add credential injection for the backend host.
+	p.Credentials.Add(credentials.Credential{
+		ID:            "cred-1",
+		HostPattern:   "127.0.0.1",
+		InjectionType: credentials.InjectBearer,
+		Token:         "injected-secret",
+		Active:        true,
+	})
+
+	// Use the backend's TLS client config so the proxy can connect to it.
+	p.Transport = backend.Client().Transport
+
+	// Start the proxy server.
+	proxyListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer proxyListener.Close()
+
+	proxySrv := &http.Server{Handler: p}
+	go proxySrv.Serve(proxyListener)
+	defer proxySrv.Close()
+
+	// Connect as a client through the proxy.
+	proxyConn, err := net.Dial("tcp", proxyListener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer proxyConn.Close()
+
+	// Send CONNECT request.
+	connectReq := fmt.Sprintf("CONNECT 127.0.0.1:%s HTTP/1.1\r\nHost: 127.0.0.1:%s\r\n%s: tok-1\r\n\r\n",
+		backendPort, backendPort, AuthHeader)
+	proxyConn.Write([]byte(connectReq))
+
+	// Read the 200 response.
+	br := bufio.NewReader(proxyConn)
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatalf("read CONNECT response: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected CONNECT 200, got %d", resp.StatusCode)
+	}
+
+	// Upgrade to TLS using the CA as trust anchor.
+	caPool := x509.NewCertPool()
+	caPool.AddCert(ca.Certificate)
+	tlsConn := tls.Client(proxyConn, &tls.Config{
+		RootCAs:    caPool,
+		ServerName: "127.0.0.1",
+	})
+	defer tlsConn.Close()
+
+	if err := tlsConn.Handshake(); err != nil {
+		t.Fatalf("TLS handshake with proxy: %v", err)
+	}
+
+	// Send an HTTPS request through the MITM'd connection.
+	httpReq, _ := http.NewRequest("GET", fmt.Sprintf("https://127.0.0.1:%s/api/data", backendPort), nil)
+	httpReq.Write(tlsConn)
+
+	// Read response.
+	tlsReader := bufio.NewReader(tlsConn)
+	httpResp, err := http.ReadResponse(tlsReader, httpReq)
+	if err != nil {
+		t.Fatalf("read HTTPS response: %v", err)
+	}
+	defer httpResp.Body.Close()
+
+	if httpResp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", httpResp.StatusCode)
+	}
+
+	// Verify credential injection worked through TLS MITM.
+	if receivedAuth != "Bearer injected-secret" {
+		t.Errorf("expected injected bearer token, got %q", receivedAuth)
+	}
+}
+
+// TestProxy_MITM_HostCertVerifiable checks that the MITM'd connection
+// presents a valid certificate for the target host.
+func TestProxy_MITM_HostCertVerifiable(t *testing.T) {
+	p, skills, _, ca := setupProxyWithCA(t)
+	skills.AddSkill(auth.Skill{
+		ID: "s1", Token: "tok-1", Active: true,
+		AllowedHost: []string{"test.example.com"},
+	})
+
+	// Start the proxy.
+	proxyListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer proxyListener.Close()
+
+	proxySrv := &http.Server{Handler: p}
+	go proxySrv.Serve(proxyListener)
+	defer proxySrv.Close()
+
+	// Connect and send CONNECT.
+	proxyConn, err := net.Dial("tcp", proxyListener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer proxyConn.Close()
+
+	connectReq := fmt.Sprintf("CONNECT test.example.com:443 HTTP/1.1\r\nHost: test.example.com:443\r\n%s: tok-1\r\n\r\n", AuthHeader)
+	proxyConn.Write([]byte(connectReq))
+
+	br := bufio.NewReader(proxyConn)
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// TLS handshake: the cert should be valid for test.example.com, signed by our CA.
+	caPool := x509.NewCertPool()
+	caPool.AddCert(ca.Certificate)
+	tlsConn := tls.Client(proxyConn, &tls.Config{
+		RootCAs:    caPool,
+		ServerName: "test.example.com",
+	})
+
+	err = tlsConn.Handshake()
+	if err != nil {
+		t.Fatalf("TLS handshake should succeed with CA trust: %v", err)
+	}
+	tlsConn.Close()
+
+	// Verify the presented cert has the right CN.
+	state := tlsConn.ConnectionState()
+	if len(state.PeerCertificates) == 0 {
+		t.Fatal("expected peer certificates")
+	}
+	cn := state.PeerCertificates[0].Subject.CommonName
+	if cn != "test.example.com" {
+		t.Errorf("expected CN test.example.com, got %q", cn)
 	}
 }

@@ -250,10 +250,28 @@ func (p *Proxy) handleMITM(clientConn net.Conn, host, targetAddr string, skill *
 	defer clientConn.Close()
 
 	// Present a CA-signed certificate for this host to the client.
-	tlsConfig := p.CA.TLSConfigForMITM()
-	// Pre-set ServerName so GetCertificate gets the right host even if
-	// the client doesn't send SNI (e.g. using IP).
-	tlsConfig.ServerName = host
+	// We create a custom GetCertificate that falls back to the known host
+	// when the client doesn't send SNI (e.g. connecting by IP address).
+	hostCert, err := p.CA.GenerateHostCert(host)
+	if err != nil {
+		p.Logger.Add(proxylog.Entry{
+			SkillID: skill.ID,
+			Method:  "CONNECT",
+			Host:    host,
+			Status:  "error",
+			Detail:  "generate host cert: " + err.Error(),
+		})
+		return
+	}
+	tlsConfig := &tls.Config{
+		GetCertificate: func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			if info.ServerName != "" && info.ServerName != host {
+				return p.CA.GenerateHostCert(info.ServerName)
+			}
+			return hostCert, nil
+		},
+		MinVersion: tls.VersionTLS12,
+	}
 
 	tlsClientConn := tls.Server(clientConn, tlsConfig)
 	if err := tlsClientConn.Handshake(); err != nil {
