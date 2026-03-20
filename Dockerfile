@@ -101,12 +101,6 @@ RUN systemctl enable dnsmasq.service \
     && systemctl enable firewall4ai-iptables.service \
     && systemctl enable ssh.service
 
-# Set hostname
-RUN echo "firewall4ai" > /etc/hostname
-
-# Set DNS resolver (static, dnsmasq handles agent DNS separately)
-RUN printf "nameserver 1.1.1.1\nnameserver 1.0.0.1\n" > /etc/resolv.conf
-
 # Create data directory
 RUN mkdir -p /var/lib/firewall4ai
 
