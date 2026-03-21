@@ -69,8 +69,10 @@ RUN apt-get update \
     && rm -rf /etc/ssh/*key* \
     && rm -rf /etc/mdadm \
     && rm -rf /boot/initrd.img* \
-    && echo > /etc/motd
+    && echo > /etc/motd \
+    && rm -f /etc/resolv.conf
 COPY /config/.vimrc /root/.vimrc
+COPY /config/resolv.conf /etc/resolv.conf
 
 # Hack to prevent systemd-firstboot failures while setting keymap
 # https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=790955
