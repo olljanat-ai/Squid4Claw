@@ -37,7 +37,7 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/firewall4ai:${{ github.ref_name }}
             ghcr.io/${{ github.repository_owner }}/firewall4ai:latest
           build-args: |
-            VERSION=${GITHUB_REF_NAME}
+            VERSION=${{ github.ref_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

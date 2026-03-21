@@ -56,7 +56,6 @@ RUN apt-get update \
     shim-signed \
     squashfs-tools \
     systemd \
-    systemd-resolved \
     systemd-sysv \
     systemd-timesyncd \
     tcpdump \
@@ -134,6 +133,10 @@ COPY config/config.yaml /etc/elemental/
 # Generate initrd with required elemental services
 COPY config/50-elemental-initrd.conf /etc/dracut.conf.d/
 RUN elemental --debug init -f
+
+# Use dnsmasq for DNS resolution
+RUN rm -f /etc/resolv.conf
+COPY /config/resolv.conf /etc/resolv.conf
 
 # Include bootargs.cfg after elemental init
 COPY config/bootargs.cfg /etc/elemental/
