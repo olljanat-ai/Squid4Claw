@@ -56,7 +56,6 @@ RUN apt-get update \
     shim-signed \
     squashfs-tools \
     systemd \
-    systemd-resolved \
     systemd-sysv \
     systemd-timesyncd \
     tcpdump \
