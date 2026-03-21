@@ -34,6 +34,7 @@ jobs:
 
       - name: Build OS image
         run: |
+          docker pull ghcr.io/olljanat-ai/firewall4ai:latest
           VERSION=${GITHUB_REF_NAME}
           docker build . \
             --build-arg VERSION=${VERSION} \
@@ -42,19 +43,19 @@ jobs:
           docker push ghcr.io/${{ github.repository_owner }}/firewall4ai:${VERSION}
           docker push ghcr.io/${{ github.repository_owner }}/firewall4ai:latest
 
-      - name: Create ISO
-        run: |
-          VERSION=${GITHUB_REF_NAME}
-          docker create --name export ghcr.io/${{ github.repository_owner }}/firewall4ai:latest
-          mkdir rootfs
-          docker export export | tar -x -C rootfs
-          docker rm export
-          sudo ./elemental --debug build-iso --bootloader-in-rootfs --extra-cmdline "" dir:rootfs
-          sudo mv elemental.iso firewall4ai-${VERSION}.iso
+      # - name: Create ISO
+      #   run: |
+      #     VERSION=${GITHUB_REF_NAME}
+      #     docker create --name export ghcr.io/${{ github.repository_owner }}/firewall4ai:latest
+      #     mkdir rootfs
+      #     docker export export | tar -x -C rootfs
+      #     docker rm export
+      #     sudo ./elemental --debug build-iso --bootloader-in-rootfs --extra-cmdline "" dir:rootfs
+      #     sudo mv elemental.iso firewall4ai-${VERSION}.iso
 
-      - name: Create release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: |
-            firewall4ai-*.iso
+      # - name: Create release
+      #   uses: softprops/action-gh-release@v2
+      #   with:
+      #     generate_release_notes: true
+      #     files: |
+      #       firewall4ai-*.iso
