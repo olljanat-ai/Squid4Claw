@@ -259,11 +259,11 @@ Firewall4AI transparently intercepts container image pulls via the same TLS MITM
 
 When registries are configured in `config.json`, the proxy recognizes traffic to those registry hosts and applies image-level approval instead of host-level approval. All associated hosts (registry API, auth endpoints, CDN) are auto-approved at the host level — the real access control happens per-image.
 
-#### Image Approval Flow
+#### Container Image Approval Flow
 When an agent pulls an image (e.g., `docker pull ubuntu:latest`):
 1. Docker connects to `registry-1.docker.io` — transparently intercepted by iptables
 2. The proxy detects this is a configured registry host and parses the image reference (`docker.io/library/ubuntu:latest`)
-3. If no approval exists, a pending entry appears in the admin UI **Images** tab
+3. If no approval exists, a pending entry appears in the admin UI **Container Images** tab
 4. Admin approves or denies the image pull
 5. Wildcard patterns are supported for pre-approving images:
    - `docker.io/library/*` — all official Docker Hub images
@@ -282,15 +282,6 @@ The `registries` config lists all hostnames associated with each registry (API, 
   ]
 }
 ```
-
-### Explicit Proxy Mode (Backward Compatible)
-Agents can still be configured to use the proxy explicitly if preferred:
-```bash
-export HTTP_PROXY=http://10.255.255.1:8080
-export HTTPS_PROXY=http://10.255.255.1:8080
-```
-
-Both transparent and explicit proxy modes work simultaneously.
 
 ## API Reference
 ### Skills
