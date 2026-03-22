@@ -1080,7 +1080,6 @@ async function toggleSSH() {
 
 async function doUpgrade() {
   const image = document.getElementById('upgrade-image').value.trim();
-  if (!image) { alert('OCI image is required'); return; }
   if (!confirm('Upgrade to ' + image + '? The system will reboot after upgrade.')) return;
   try {
     await api('POST', '/api/system/upgrade', { image });
