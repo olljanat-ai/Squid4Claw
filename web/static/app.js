@@ -14,6 +14,7 @@ let currentApprovals = [];
 let currentImages = [];
 let currentSkills = [];
 let currentCredentials = [];
+let currentCategories = [];
 
 // --- Navigation ---
 function navigate(page) {
@@ -27,6 +28,7 @@ function navigate(page) {
   if (page === 'skills') loadSkills();
   if (page === 'credentials') loadCredentials();
   if (page === 'logs') loadLogs();
+  if (page === 'settings') loadSettings();
 }
 
 // --- API helpers ---
@@ -44,7 +46,13 @@ async function api(method, path, body) {
 // --- Skill display helper ---
 function formatSkillID(skillID) {
   if (!skillID) return '<span class="badge-status approved">global</span>';
-  return esc(skillID);
+  const skill = currentSkills.find(s => s.id === skillID);
+  return skill ? esc(skill.name) : esc(skillID);
+}
+
+function skillNameByID(id) {
+  const s = currentSkills.find(s => s.id === id);
+  return s ? s.name : id;
 }
 
 // --- Source IP display helper ---
@@ -62,11 +70,11 @@ function formatPathPrefix(pathPrefix) {
 // --- Dashboard ---
 async function loadDashboard() {
   try {
-    const [stats, pending, pendingImages, skills] = await Promise.all([
+    const [stats, pending, pendingImages] = await Promise.all([
       api('GET', '/api/logs/stats'),
       api('GET', '/api/approvals/pending'),
       api('GET', '/api/images/pending'),
-      api('GET', '/api/skills'),
+      refreshSkills(),
     ]);
     document.getElementById('stat-total').textContent = stats.total || 0;
     document.getElementById('stat-allowed').textContent = stats.allowed || 0;
@@ -137,11 +145,116 @@ async function decideDash(apiPath, host, skillID, sourceIP, pathPrefix, status) 
   }
 }
 
+// --- Filtering ---
+function getFilter(prefix) {
+  return {
+    category: document.getElementById('filter-' + prefix + '-category')?.value || '',
+    skillID: document.getElementById('filter-' + prefix + '-skill')?.value || '',
+    ip: document.getElementById('filter-' + prefix + '-ip')?.value || '',
+    status: document.getElementById('filter-' + prefix + '-status')?.value || '',
+  };
+}
+
+function matchesFilter(item, filter) {
+  if (filter.category && (item.category || '') !== filter.category) return false;
+  if (filter.skillID && (item.skill_id || '') !== filter.skillID) return false;
+  if (filter.ip && (item.source_ip || '') !== filter.ip) return false;
+  if (filter.status && item.status !== filter.status) return false;
+  return true;
+}
+
+function clearFilters(prefix) {
+  const cat = document.getElementById('filter-' + prefix + '-category');
+  const skill = document.getElementById('filter-' + prefix + '-skill');
+  const ip = document.getElementById('filter-' + prefix + '-ip');
+  const status = document.getElementById('filter-' + prefix + '-status');
+  if (cat) cat.value = '';
+  if (skill) skill.value = '';
+  if (ip) ip.value = '';
+  if (status) status.value = '';
+  if (prefix === 'url') loadApprovals();
+  if (prefix === 'image') loadImages();
+}
+
+function formatCategory(category) {
+  if (!category) return '<span class="badge-status" style="opacity:0.4">-</span>';
+  return '<span class="category-badge">' + esc(category) + '</span>';
+}
+
+// Populate a <select> dropdown, preserving the current selection if still valid.
+function populateSelect(selectId, options, emptyLabel) {
+  const el = document.getElementById(selectId);
+  if (!el) return;
+  const current = el.value;
+  el.innerHTML = '<option value="">' + esc(emptyLabel) + '</option>';
+  options.forEach(opt => {
+    const o = document.createElement('option');
+    o.value = opt.value;
+    o.textContent = opt.label;
+    el.appendChild(o);
+  });
+  // Restore selection if still available.
+  if (current && [...el.options].some(o => o.value === current)) {
+    el.value = current;
+  }
+}
+
+// Build filter dropdown options from data.
+function populateFilterDropdowns(prefix, items) {
+  // Categories from managed list.
+  populateSelect('filter-' + prefix + '-category', currentCategories.map(c => ({ value: c, label: c })), 'All categories');
+
+  // Skills from cached skills list (show name, value is ID).
+  const skillIDs = [...new Set(items.map(a => a.skill_id).filter(Boolean))];
+  const skillOpts = skillIDs.map(id => ({ value: id, label: skillNameByID(id) }));
+  skillOpts.sort((a, b) => a.label.localeCompare(b.label));
+  populateSelect('filter-' + prefix + '-skill', skillOpts, 'All skills');
+
+  // Source IPs learned from the data.
+  const ips = [...new Set(items.map(a => a.source_ip).filter(Boolean))].sort();
+  populateSelect('filter-' + prefix + '-ip', ips.map(ip => ({ value: ip, label: ip })), 'All source IPs');
+}
+
+// Populate a category <select> in a modal.
+function populateCategorySelect(selectId, selectedValue) {
+  const el = document.getElementById(selectId);
+  if (!el) return;
+  el.innerHTML = '<option value="">No category</option>';
+  currentCategories.forEach(c => {
+    const o = document.createElement('option');
+    o.value = c;
+    o.textContent = c;
+    el.appendChild(o);
+  });
+  el.value = selectedValue || '';
+}
+
+async function refreshCategories() {
+  try {
+    currentCategories = await api('GET', '/api/categories') || [];
+  } catch (e) {
+    currentCategories = [];
+  }
+}
+
+async function refreshSkills() {
+  try {
+    currentSkills = await api('GET', '/api/skills') || [];
+  } catch (e) {
+    currentSkills = [];
+  }
+}
+
 // --- URL Rules (Approvals) ---
 async function loadApprovals() {
   try {
-    const approvals = await api('GET', '/api/approvals');
+    const [approvals] = await Promise.all([
+      api('GET', '/api/approvals'),
+      refreshCategories(),
+      refreshSkills(),
+    ]);
     currentApprovals = approvals || [];
+    populateFilterDropdowns('url', currentApprovals);
     const pending = currentApprovals.filter(a => a.status === 'pending');
     const badge = document.getElementById('approval-badge');
     if (pending.length > 0) {
@@ -150,20 +263,24 @@ async function loadApprovals() {
     } else {
       badge.style.display = 'none';
     }
+    const filter = getFilter('url');
+    const filtered = currentApprovals.filter(a => matchesFilter(a, filter));
     const tbody = document.getElementById('approvals-tbody');
     tbody.innerHTML = '';
-    if (currentApprovals.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No URL rules</td></tr>';
+    if (filtered.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No URL rules</td></tr>';
       return;
     }
-    currentApprovals.sort((a, b) => {
+    filtered.sort((a, b) => {
       const order = { pending: 0, approved: 1, denied: 2 };
       return (order[a.status] || 9) - (order[b.status] || 9);
     });
-    currentApprovals.forEach((a, idx) => {
+    filtered.forEach((a) => {
+      const idx = currentApprovals.indexOf(a);
       const skillDisplay = formatSkillID(a.skill_id);
       const sourceDisplay = formatSourceIP(a.source_ip);
       const pathDisplay = formatPathPrefix(a.path_prefix);
+      const categoryDisplay = formatCategory(a.category);
       const pp = a.path_prefix || '';
       const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditRule(${idx})" title="Edit rule">Edit</button>`;
       const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteApproval('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}')" title="Delete rule">Delete</button>`;
@@ -188,6 +305,7 @@ async function loadApprovals() {
       tbody.innerHTML += `<tr>
         <td><strong>${esc(a.host)}</strong></td>
         <td>${pathDisplay}</td>
+        <td>${categoryDisplay}</td>
         <td>${skillDisplay}</td>
         <td>${sourceDisplay}</td>
         <td><span class="badge-status ${a.status}">${a.status}</span></td>
@@ -252,6 +370,7 @@ function showAddRule() {
   document.getElementById('rule-source-ip').value = '';
   document.getElementById('rule-skill-id').value = '';
   document.getElementById('rule-status').value = 'approved';
+  populateCategorySelect('rule-category', '');
   document.getElementById('rule-note').value = '';
   updateRuleFields();
   document.getElementById('modal-rule').classList.add('active');
@@ -276,6 +395,7 @@ function showEditRule(idx) {
     document.getElementById('rule-level').value = 'global';
   }
   document.getElementById('rule-status').value = a.status === 'pending' ? 'approved' : a.status;
+  populateCategorySelect('rule-category', a.category || '');
   document.getElementById('rule-note').value = a.note || '';
   updateRuleFields();
   document.getElementById('modal-rule').classList.add('active');
@@ -298,6 +418,7 @@ async function submitRule() {
   const pathPrefix = document.getElementById('rule-path-prefix').value.trim();
   const level = document.getElementById('rule-level').value;
   const status = document.getElementById('rule-status').value;
+  const category = document.getElementById('rule-category').value.trim();
   const note = document.getElementById('rule-note').value.trim();
   let sourceIP = '';
   let skillID = '';
@@ -325,7 +446,7 @@ async function submitRule() {
         });
       }
     }
-    await api('POST', '/api/approvals/decide', { host, skill_id: skillID, source_ip: sourceIP, path_prefix: pathPrefix, status, note });
+    await api('POST', '/api/approvals/decide', { host, skill_id: skillID, source_ip: sourceIP, path_prefix: pathPrefix, category, status, note });
     hideAddRule();
     loadApprovals();
   } catch (e) {
@@ -336,8 +457,13 @@ async function submitRule() {
 // --- Images ---
 async function loadImages() {
   try {
-    const images = await api('GET', '/api/images');
+    const [images] = await Promise.all([
+      api('GET', '/api/images'),
+      refreshCategories(),
+      refreshSkills(),
+    ]);
     currentImages = images || [];
+    populateFilterDropdowns('image', currentImages);
     const pending = currentImages.filter(a => a.status === 'pending');
     const badge = document.getElementById('image-badge');
     if (pending.length > 0) {
@@ -346,19 +472,23 @@ async function loadImages() {
     } else {
       badge.style.display = 'none';
     }
+    const filter = getFilter('image');
+    const filtered = currentImages.filter(a => matchesFilter(a, filter));
     const tbody = document.getElementById('images-tbody');
     tbody.innerHTML = '';
-    if (currentImages.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No image approval records</td></tr>';
+    if (filtered.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No image approval records</td></tr>';
       return;
     }
-    currentImages.sort((a, b) => {
+    filtered.sort((a, b) => {
       const order = { pending: 0, approved: 1, denied: 2 };
       return (order[a.status] || 9) - (order[b.status] || 9);
     });
-    currentImages.forEach((a, idx) => {
+    filtered.forEach((a) => {
+      const idx = currentImages.indexOf(a);
       const skillDisplay = formatSkillID(a.skill_id);
       const sourceDisplay = formatSourceIP(a.source_ip);
+      const categoryDisplay = formatCategory(a.category);
       const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditImageRule(${idx})" title="Edit rule">Edit</button>`;
       const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}')" title="Delete rule">Delete</button>`;
       let actions = '';
@@ -381,6 +511,7 @@ async function loadImages() {
       }
       tbody.innerHTML += `<tr>
         <td><strong>${esc(a.host)}</strong></td>
+        <td>${categoryDisplay}</td>
         <td>${skillDisplay}</td>
         <td>${sourceDisplay}</td>
         <td><span class="badge-status ${a.status}">${a.status}</span></td>
@@ -443,6 +574,7 @@ function showAddImageRule() {
   document.getElementById('image-rule-level').value = 'global';
   document.getElementById('image-rule-source-ip').value = '';
   document.getElementById('image-rule-status').value = 'approved';
+  populateCategorySelect('image-rule-category', '');
   document.getElementById('image-rule-note').value = '';
   updateImageRuleFields();
   document.getElementById('modal-image-rule').classList.add('active');
@@ -462,6 +594,7 @@ function showEditImageRule(idx) {
     document.getElementById('image-rule-level').value = 'global';
   }
   document.getElementById('image-rule-status').value = a.status === 'pending' ? 'approved' : a.status;
+  populateCategorySelect('image-rule-category', a.category || '');
   document.getElementById('image-rule-note').value = a.note || '';
   updateImageRuleFields();
   document.getElementById('modal-image-rule').classList.add('active');
@@ -482,6 +615,7 @@ async function submitImageRule() {
   if (!host) { alert('Image pattern is required'); return; }
   const level = document.getElementById('image-rule-level').value;
   const status = document.getElementById('image-rule-status').value;
+  const category = document.getElementById('image-rule-category').value.trim();
   const note = document.getElementById('image-rule-note').value.trim();
   let sourceIP = '';
   if (level === 'vm') {
@@ -499,7 +633,7 @@ async function submitImageRule() {
         });
       }
     }
-    await api('POST', '/api/images/decide', { host, skill_id: '', source_ip: sourceIP, status, note });
+    await api('POST', '/api/images/decide', { host, skill_id: '', source_ip: sourceIP, category, status, note });
     hideImageRuleModal();
     loadImages();
   } catch (e) {
@@ -915,6 +1049,103 @@ function timeAgo(ts) {
   return Math.floor(seconds / 86400) + 'd ago';
 }
 
+// --- Settings ---
+async function loadSettings() {
+  await refreshCategories();
+  renderCategories();
+  try {
+    const data = await api('GET', '/api/settings/ssh');
+    const statusEl = document.getElementById('ssh-status');
+    const btn = document.getElementById('ssh-toggle-btn');
+    statusEl.textContent = data.enabled ? 'enabled' : 'disabled';
+    statusEl.className = 'badge-status ' + (data.enabled ? 'approved' : 'denied');
+    btn.textContent = data.enabled ? 'Disable' : 'Enable';
+    btn.disabled = false;
+  } catch (e) {
+    console.error('Settings load error:', e);
+  }
+}
+
+async function toggleSSH() {
+  const statusEl = document.getElementById('ssh-status');
+  const isEnabled = statusEl.textContent === 'enabled';
+  if (!confirm(isEnabled ? 'Disable SSH access?' : 'Enable SSH access?')) return;
+  try {
+    await api('POST', '/api/settings/ssh', { enabled: !isEnabled });
+    loadSettings();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function doUpgrade() {
+  const image = document.getElementById('upgrade-image').value.trim();
+  if (!image) { alert('OCI image is required'); return; }
+  if (!confirm('Upgrade to ' + image + '? The system will reboot after upgrade.')) return;
+  try {
+    await api('POST', '/api/system/upgrade', { image });
+    alert('Upgrade started. The system will reboot when complete.');
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function doReboot() {
+  if (!confirm('Reboot the appliance now?')) return;
+  try {
+    await api('POST', '/api/system/reboot', {});
+    alert('Rebooting...');
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+function renderCategories() {
+  const container = document.getElementById('categories-list');
+  if (!container) return;
+  if (currentCategories.length === 0) {
+    container.innerHTML = '<div style="color:var(--text-dim);font-size:13px;padding:8px 0">No categories defined yet.</div>';
+    return;
+  }
+  container.innerHTML = currentCategories.map(c =>
+    `<span class="category-badge" style="margin:2px 4px;padding:4px 10px;font-size:12px">${esc(c)} <span style="cursor:pointer;margin-left:6px;opacity:0.6" onclick="removeCategory('${esc(c)}')">&times;</span></span>`
+  ).join('');
+}
+
+async function addCategory() {
+  const input = document.getElementById('new-category-name');
+  const name = input.value.trim();
+  if (!name) { alert('Category name is required'); return; }
+  try {
+    await api('POST', '/api/categories', { name });
+    input.value = '';
+    await refreshCategories();
+    renderCategories();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function removeCategory(name) {
+  if (!confirm(`Delete category "${name}"?`)) return;
+  try {
+    await api('DELETE', '/api/categories?name=' + encodeURIComponent(name));
+    await refreshCategories();
+    renderCategories();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function loadVersion() {
+  try {
+    const data = await api('GET', '/api/version');
+    document.getElementById('version-display').textContent = 'v' + (data.version || 'unknown');
+  } catch (e) {
+    // ignore
+  }
+}
+
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.sidebar nav a').forEach(a => {
@@ -925,4 +1156,5 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   navigate('dashboard');
   startPolling();
+  loadVersion();
 });

@@ -31,6 +31,7 @@ type HostApproval struct {
 	SkillID    string    `json:"skill_id"`
 	SourceIP   string    `json:"source_ip"`
 	PathPrefix string    `json:"path_prefix,omitempty"`
+	Category   string    `json:"category,omitempty"`
 	Status     Status    `json:"status"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
@@ -409,6 +410,17 @@ func (m *Manager) CheckExistingWithMatcher(host, skillID, sourceIP string, match
 		}
 	}
 	return "", false
+}
+
+// SetCategory updates the category for an existing approval.
+func (m *Manager) SetCategory(host, skillID, sourceIP, pathPrefix, category string) {
+	k := key(host, skillID, sourceIP, pathPrefix)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if a, ok := m.approvals[k]; ok {
+		a.Category = category
+		a.UpdatedAt = time.Now()
+	}
 }
 
 // Delete removes an approval entry.
