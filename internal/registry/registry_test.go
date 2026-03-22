@@ -15,7 +15,7 @@ func TestRegistryForHost(t *testing.T) {
 
 	tests := []struct {
 		host string
-		want string // expected registry name, or "" for nil
+		want string
 	}{
 		{"registry-1.docker.io", "docker.io"},
 		{"auth.docker.io", "docker.io"},
@@ -48,10 +48,10 @@ func TestCheckRepoApproval(t *testing.T) {
 		t.Error("expected false with no approvals")
 	}
 
-	// Approve a specific tag.
-	mgr.Decide("docker.io/library/ubuntu:latest", "", "", approval.StatusApproved, "")
+	// Approve the repo.
+	mgr.Decide("docker.io/library/ubuntu", "", "", approval.StatusApproved, "")
 	if !CheckRepoApproval(mgr, "docker.io/library/ubuntu") {
-		t.Error("expected true after approving a tag")
+		t.Error("expected true after approving repo")
 	}
 
 	// Different repo should not match.
@@ -100,19 +100,17 @@ func TestMatchImageRef(t *testing.T) {
 		imageRef string
 		want     bool
 	}{
-		{"docker.io/library/ubuntu:latest", "docker.io/library/ubuntu:latest", true},
-		{"docker.io/library/ubuntu:latest", "docker.io/library/ubuntu:22.04", false},
-		{"docker.io/library/*", "docker.io/library/ubuntu:latest", true},
-		{"docker.io/library/*", "docker.io/library/nginx:1.25", true},
-		{"docker.io/library/*", "docker.io/myorg/myrepo:latest", false},
-		{"docker.io/*", "docker.io/library/ubuntu:latest", true},
-		{"ghcr.io/org/*", "ghcr.io/org/repo:v1", true},
-		{"ghcr.io/org/*", "ghcr.io/other/repo:v1", false},
+		{"docker.io/library/ubuntu", "docker.io/library/ubuntu", true},
+		{"docker.io/library/ubuntu", "docker.io/library/nginx", false},
+		{"docker.io/library/*", "docker.io/library/ubuntu", true},
+		{"docker.io/library/*", "docker.io/library/nginx", true},
+		{"docker.io/library/*", "docker.io/myorg/myrepo", false},
+		{"docker.io/*", "docker.io/library/ubuntu", true},
+		{"ghcr.io/org/*", "ghcr.io/org/repo", true},
+		{"ghcr.io/org/*", "ghcr.io/other/repo", false},
+		// Legacy tag/digest patterns still work.
 		{"docker.io/library/ubuntu:*", "docker.io/library/ubuntu:latest", true},
-		{"docker.io/library/ubuntu:*", "docker.io/library/ubuntu:22.04", true},
-		{"docker.io/library/ubuntu:*", "docker.io/library/nginx:latest", false},
 		{"docker.io/library/ubuntu@*", "docker.io/library/ubuntu@sha256:abc123", true},
-		{"docker.io/library/ubuntu:latest", "ghcr.io/library/ubuntu:latest", false},
 	}
 	for _, tt := range tests {
 		got := MatchImageRef(tt.pattern, tt.imageRef)
@@ -122,24 +120,21 @@ func TestMatchImageRef(t *testing.T) {
 	}
 }
 
-func TestParseImageRef(t *testing.T) {
+func TestParseImageRepo(t *testing.T) {
 	tests := []struct {
-		registry  string
-		name      string
-		reference string
-		want      string
+		registry string
+		name     string
+		want     string
 	}{
-		{"docker.io", "library/ubuntu", "latest", "docker.io/library/ubuntu:latest"},
-		{"docker.io", "ubuntu", "latest", "docker.io/library/ubuntu:latest"},
-		{"docker.io", "myorg/myrepo", "v1.0", "docker.io/myorg/myrepo:v1.0"},
-		{"docker.io", "library/ubuntu", "sha256:abc123", "docker.io/library/ubuntu@sha256:abc123"},
-		{"ghcr.io", "myorg/myrepo", "v1.0", "ghcr.io/myorg/myrepo:v1.0"},
-		{"ghcr.io", "myorg/myrepo", "sha256:abc", "ghcr.io/myorg/myrepo@sha256:abc"},
+		{"docker.io", "library/ubuntu", "docker.io/library/ubuntu"},
+		{"docker.io", "ubuntu", "docker.io/library/ubuntu"},
+		{"docker.io", "myorg/myrepo", "docker.io/myorg/myrepo"},
+		{"ghcr.io", "myorg/myrepo", "ghcr.io/myorg/myrepo"},
 	}
 	for _, tt := range tests {
-		got := ParseImageRef(tt.registry, tt.name, tt.reference)
+		got := ParseImageRepo(tt.registry, tt.name)
 		if got != tt.want {
-			t.Errorf("ParseImageRef(%q, %q, %q) = %q, want %q", tt.registry, tt.name, tt.reference, got, tt.want)
+			t.Errorf("ParseImageRepo(%q, %q) = %q, want %q", tt.registry, tt.name, got, tt.want)
 		}
 	}
 }

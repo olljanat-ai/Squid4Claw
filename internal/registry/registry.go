@@ -24,32 +24,29 @@ func RegistryForHost(host string, registries []config.RegistryConfig) *config.Re
 	return nil
 }
 
-// CheckRepoApproval returns true if any image in the repository has been
-// approved. Used for blob requests where repo-level access is sufficient.
+// CheckRepoApproval returns true if the repository (or a broader wildcard
+// pattern covering it) has been approved. Approvals are stored as repo refs
+// without tags (e.g., "docker.io/library/ubuntu").
 func CheckRepoApproval(mgr *approval.Manager, repo string) bool {
-	repoPrefix := repo + ":"
-	repoWild := repo + "/*"
-	for _, a := range mgr.ListAll() {
-		if a.Status != approval.StatusApproved {
-			continue
-		}
-		if strings.HasPrefix(a.Host, repoPrefix) || a.Host == repo || MatchImageRef(a.Host, repoWild) {
-			return true
-		}
+	// Exact match.
+	if status, ok := mgr.CheckExisting(repo, "", ""); ok && status == approval.StatusApproved {
+		return true
+	}
+	// Wildcard match (e.g., "docker.io/library/*" covers "docker.io/library/ubuntu").
+	if status, ok := mgr.CheckExistingWithMatcher(repo, "", "", MatchImageRef); ok && status == approval.StatusApproved {
+		return true
 	}
 	return false
 }
 
-// ParseImageRef constructs a full image reference from URL path components.
-// For Docker Hub, names without a slash get "library/" prefix.
-func ParseImageRef(registryName, name, reference string) string {
+// ParseImageRepo constructs a repository reference (without tag) from URL
+// path components. For Docker Hub, names without a slash get "library/" prefix.
+// Example: ("docker.io", "library/ubuntu") -> "docker.io/library/ubuntu"
+func ParseImageRepo(registryName, name string) string {
 	if registryName == "docker.io" && !strings.Contains(name, "/") {
 		name = "library/" + name
 	}
-	if strings.HasPrefix(reference, "sha256:") {
-		return registryName + "/" + name + "@" + reference
-	}
-	return registryName + "/" + name + ":" + reference
+	return registryName + "/" + name
 }
 
 // ParsePath extracts the name and reference from a Registry V2 URL path.

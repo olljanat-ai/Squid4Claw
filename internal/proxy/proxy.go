@@ -673,20 +673,35 @@ func (p *Proxy) handleRegistryTLSRequest(clientConn net.Conn, req *http.Request,
 	sid := getSkillID(skill)
 	urlPath := req.URL.Path
 
-	name, ref, pathType, isV2 := registry.ParsePath(urlPath)
+	name, _, pathType, isV2 := registry.ParsePath(urlPath)
 
-	if isV2 && pathType == "manifests" {
-		// Manifest request: check repo-level first (allows all tags/digests
-		// once any image in the repo is approved), then fall back to
-		// per-image approval which registers a pending entry for admin.
-		imageRef := registry.ParseImageRef(reg.Name, name, ref)
-		repo := reg.Name + "/" + name
-		if reg.Name == "docker.io" && !strings.Contains(name, "/") {
-			repo = reg.Name + "/library/" + name
-		}
-		approved := registry.CheckRepoApproval(p.ImageApprovals, repo)
-		if !approved {
-			status := p.checkImageApproval(imageRef, skill, sourceIP)
+	if isV2 && (pathType == "manifests" || pathType == "blobs") {
+		// Manifest and blob requests use repo-level approval.
+		// Approving a repo allows all tags, digests, and layers.
+		repo := registry.ParseImageRepo(reg.Name, name)
+		if !registry.CheckRepoApproval(p.ImageApprovals, repo) {
+			if pathType == "blobs" {
+				// Blobs don't create pending entries; they are only
+				// allowed if the repo was already approved via a manifest.
+				p.Logger.Add(proxylog.Entry{
+					SkillID: sid,
+					Method:  req.Method,
+					Host:    host,
+					Path:    urlPath,
+					Status:  "denied",
+					Detail:  "repository not approved: " + repo,
+				})
+				resp := &http.Response{
+					StatusCode: http.StatusForbidden,
+					ProtoMajor: 1,
+					ProtoMinor: 1,
+					Header:     make(http.Header),
+				}
+				resp.Write(clientConn)
+				return
+			}
+			// Manifest: register pending and wait for admin decision.
+			status := p.checkImageApproval(repo, skill, sourceIP)
 			if status != approval.StatusApproved {
 				p.Logger.Add(proxylog.Entry{
 					SkillID: sid,
@@ -694,7 +709,7 @@ func (p *Proxy) handleRegistryTLSRequest(clientConn net.Conn, req *http.Request,
 					Host:    host,
 					Path:    urlPath,
 					Status:  string(status),
-					Detail:  "image not approved: " + imageRef,
+					Detail:  "image not approved: " + repo,
 				})
 				resp := &http.Response{
 					StatusCode: http.StatusForbidden,
@@ -712,37 +727,7 @@ func (p *Proxy) handleRegistryTLSRequest(clientConn net.Conn, req *http.Request,
 			Host:     host,
 			Path:     urlPath,
 			Status:   "allowed",
-			Detail:   imageRef,
-			Duration: time.Since(start).Milliseconds(),
-		})
-	} else if isV2 && pathType == "blobs" {
-		// Blob request: repo-level approval.
-		repo := reg.Name + "/" + name
-		if !registry.CheckRepoApproval(p.ImageApprovals, repo) {
-			p.Logger.Add(proxylog.Entry{
-				SkillID: sid,
-				Method:  req.Method,
-				Host:    host,
-				Path:    urlPath,
-				Status:  "denied",
-				Detail:  "repository not approved: " + repo,
-			})
-			resp := &http.Response{
-				StatusCode: http.StatusForbidden,
-				ProtoMajor: 1,
-				ProtoMinor: 1,
-				Header:     make(http.Header),
-			}
-			resp.Write(clientConn)
-			return
-		}
-		p.Logger.Add(proxylog.Entry{
-			SkillID:  sid,
-			Method:   req.Method,
-			Host:     host,
-			Path:     urlPath,
-			Status:   "allowed",
-			Detail:   "registry blob",
+			Detail:   repo,
 			Duration: time.Since(start).Milliseconds(),
 		})
 	} else {
