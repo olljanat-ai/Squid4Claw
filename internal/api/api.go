@@ -80,11 +80,12 @@ func (h *Handler) listPending(w http.ResponseWriter, r *http.Request) {
 }
 
 type decisionRequest struct {
-	Host     string          `json:"host"`
-	SkillID  string          `json:"skill_id"`
-	SourceIP string          `json:"source_ip"`
-	Status   approval.Status `json:"status"`
-	Note     string          `json:"note"`
+	Host       string          `json:"host"`
+	SkillID    string          `json:"skill_id"`
+	SourceIP   string          `json:"source_ip"`
+	PathPrefix string          `json:"path_prefix"`
+	Status     approval.Status `json:"status"`
+	Note       string          `json:"note"`
 }
 
 func (h *Handler) decideApproval(w http.ResponseWriter, r *http.Request) {
@@ -97,15 +98,16 @@ func (h *Handler) decideApproval(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "status must be 'approved' or 'denied'", http.StatusBadRequest)
 		return
 	}
-	h.Approvals.Decide(req.Host, req.SkillID, req.SourceIP, req.Status, req.Note)
+	h.Approvals.Decide(req.Host, req.SkillID, req.SourceIP, req.PathPrefix, req.Status, req.Note)
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
 
 type deleteApprovalRequest struct {
-	Host     string `json:"host"`
-	SkillID  string `json:"skill_id"`
-	SourceIP string `json:"source_ip"`
+	Host       string `json:"host"`
+	SkillID    string `json:"skill_id"`
+	SourceIP   string `json:"source_ip"`
+	PathPrefix string `json:"path_prefix"`
 }
 
 func (h *Handler) deleteApproval(w http.ResponseWriter, r *http.Request) {
@@ -118,7 +120,7 @@ func (h *Handler) deleteApproval(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "host is required", http.StatusBadRequest)
 		return
 	}
-	h.Approvals.Delete(req.Host, req.SkillID, req.SourceIP)
+	h.Approvals.Delete(req.Host, req.SkillID, req.SourceIP, req.PathPrefix)
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
@@ -275,7 +277,7 @@ func (h *Handler) decideImageApproval(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "status must be 'approved' or 'denied'", http.StatusBadRequest)
 		return
 	}
-	h.ImageApprovals.Decide(req.Host, req.SkillID, req.SourceIP, req.Status, req.Note)
+	h.ImageApprovals.Decide(req.Host, req.SkillID, req.SourceIP, "", req.Status, req.Note)
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
@@ -290,7 +292,7 @@ func (h *Handler) deleteImageApproval(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "host is required", http.StatusBadRequest)
 		return
 	}
-	h.ImageApprovals.Delete(req.Host, req.SkillID, req.SourceIP)
+	h.ImageApprovals.Delete(req.Host, req.SkillID, req.SourceIP, "")
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }

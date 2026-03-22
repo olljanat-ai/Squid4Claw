@@ -110,35 +110,36 @@ func (p *Proxy) authenticateOptional(r *http.Request) (*auth.Skill, error) {
 	return skill, nil
 }
 
-// checkApproval verifies the host is approved using three levels:
+// checkApproval verifies the host+path is approved using three levels:
 //  1. Global (skillID="" and sourceIP="") — applies to all agents on all VMs
 //  2. VM-specific (skillID="" and sourceIP set) — applies to all agents on that VM
 //  3. Skill-specific (skillID set) — applies to agents using that skill
 //
 // Checks are performed broadest-first. If no existing decision is found,
 // a pending entry is registered at the most specific applicable level.
-func (p *Proxy) checkApproval(host string, skill *auth.Skill, sourceIP string) approval.Status {
+// The path parameter enables fine-grained URL path approval; empty path
+// means host-level only (used for blind CONNECT tunnels).
+func (p *Proxy) checkApproval(host, path string, skill *auth.Skill, sourceIP string) approval.Status {
 	// Check pre-approved hosts for authenticated requests.
 	if skill != nil && p.Skills.IsHostPreApproved(skill.Token, host) {
 		return approval.StatusApproved
 	}
 
-	// 1. Check global approval (host approved/denied for all agents).
-	// Uses wildcard matching so *.example.com rules match sub.example.com.
-	if globalStatus, exists := p.Approvals.CheckExistingWithWildcards(host, "", ""); exists && globalStatus != approval.StatusPending {
+	// 1. Check global approval (host+path approved/denied for all agents).
+	if globalStatus, exists := p.Approvals.CheckExistingWithPath(host, path, "", ""); exists && globalStatus != approval.StatusPending {
 		return globalStatus
 	}
 
 	// 2. Check VM-specific approval.
 	if sourceIP != "" {
-		if vmStatus, exists := p.Approvals.CheckExistingWithWildcards(host, "", sourceIP); exists && vmStatus != approval.StatusPending {
+		if vmStatus, exists := p.Approvals.CheckExistingWithPath(host, path, "", sourceIP); exists && vmStatus != approval.StatusPending {
 			return vmStatus
 		}
 	}
 
 	// 3. Check skill-specific approval.
 	if skill != nil {
-		if skillStatus, exists := p.Approvals.CheckExistingWithWildcards(host, skill.ID, ""); exists && skillStatus != approval.StatusPending {
+		if skillStatus, exists := p.Approvals.CheckExistingWithPath(host, path, skill.ID, ""); exists && skillStatus != approval.StatusPending {
 			return skillStatus
 		}
 	}
@@ -150,9 +151,51 @@ func (p *Proxy) checkApproval(host string, skill *auth.Skill, sourceIP string) a
 	if sid != "" {
 		pendingIP = "" // skill-level pending, not VM-level
 	}
-	status := p.Approvals.Check(host, sid, pendingIP)
+	status := p.Approvals.Check(host, sid, pendingIP, path)
 	if status == approval.StatusPending {
-		status = p.Approvals.WaitForDecision(host, sid, pendingIP, p.ApprovalTimeout)
+		status = p.Approvals.WaitForDecision(host, sid, pendingIP, path, p.ApprovalTimeout)
+	}
+	return status
+}
+
+// checkHostApproval checks if any approval (host-only or path-specific)
+// exists for the host. Used for CONNECT+MITM where the tunnel must be
+// allowed if any path-specific approval exists, since per-request checks
+// will enforce path restrictions inside the tunnel.
+func (p *Proxy) checkHostApproval(host string, skill *auth.Skill, sourceIP string) approval.Status {
+	// Check pre-approved hosts.
+	if skill != nil && p.Skills.IsHostPreApproved(skill.Token, host) {
+		return approval.StatusApproved
+	}
+
+	// 1. Global: any approval for this host.
+	if status, exists := p.Approvals.CheckExistingForHost(host, "", ""); exists && status != approval.StatusPending {
+		return status
+	}
+
+	// 2. VM-specific.
+	if sourceIP != "" {
+		if status, exists := p.Approvals.CheckExistingForHost(host, "", sourceIP); exists && status != approval.StatusPending {
+			return status
+		}
+	}
+
+	// 3. Skill-specific.
+	if skill != nil {
+		if status, exists := p.Approvals.CheckExistingForHost(host, skill.ID, ""); exists && status != approval.StatusPending {
+			return status
+		}
+	}
+
+	// No approval found. Register pending at host level (no path) and wait.
+	sid := getSkillID(skill)
+	pendingIP := sourceIP
+	if sid != "" {
+		pendingIP = ""
+	}
+	status := p.Approvals.Check(host, sid, pendingIP, "")
+	if status == approval.StatusPending {
+		status = p.Approvals.WaitForDecision(host, sid, pendingIP, "", p.ApprovalTimeout)
 	}
 	return status
 }
@@ -183,8 +226,8 @@ func (p *Proxy) checkImageApproval(imageRef string, skill *auth.Skill, sourceIP 
 	if sid != "" {
 		pendingIP = ""
 	}
-	p.ImageApprovals.Check(imageRef, sid, pendingIP)
-	return p.ImageApprovals.WaitForDecision(imageRef, sid, pendingIP, p.ApprovalTimeout)
+	p.ImageApprovals.Check(imageRef, sid, pendingIP, "")
+	return p.ImageApprovals.WaitForDecision(imageRef, sid, pendingIP, "", p.ApprovalTimeout)
 }
 
 func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
@@ -210,7 +253,7 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Remove our custom header before forwarding.
 	r.Header.Del(AuthHeader)
 
-	status := p.checkApproval(host, skill, sourceIP)
+	status := p.checkApproval(host, r.URL.Path, skill, sourceIP)
 	if status != approval.StatusApproved {
 		p.Logger.Add(proxylog.Entry{
 			SkillID: sid,
@@ -293,7 +336,15 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := p.checkApproval(host, skill, sourceIP)
+	// For CONNECT with MITM, check if any approval (host-only or path-specific)
+	// exists. Per-request path checks happen in handleMITMRequest.
+	// For blind tunnels (no MITM), use host-only check since we can't inspect paths.
+	var status approval.Status
+	if p.CA != nil {
+		status = p.checkHostApproval(host, skill, sourceIP)
+	} else {
+		status = p.checkApproval(host, "", skill, sourceIP)
+	}
 	if status != approval.StatusApproved {
 		p.Logger.Add(proxylog.Entry{
 			SkillID: getSkillID(skill),
@@ -415,6 +466,27 @@ func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, 
 	// Check if this is a container registry request.
 	if reg := registry.RegistryForHost(host, p.Registries); reg != nil {
 		p.handleRegistryTLSRequest(clientConn, req, host, sourceIP, skill, reg, start)
+		return
+	}
+
+	// Check path-level approval for this specific request.
+	status := p.checkApproval(host, req.URL.Path, skill, sourceIP)
+	if status != approval.StatusApproved {
+		p.Logger.Add(proxylog.Entry{
+			SkillID: sid,
+			Method:  req.Method,
+			Host:    host,
+			Path:    req.URL.Path,
+			Status:  string(status),
+			Detail:  "path not approved",
+		})
+		resp := &http.Response{
+			StatusCode: http.StatusForbidden,
+			ProtoMajor: 1,
+			ProtoMinor: 1,
+			Header:     make(http.Header),
+		}
+		resp.Write(clientConn)
 		return
 	}
 
@@ -603,7 +675,7 @@ func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Reque
 		return
 	}
 
-	status := p.checkApproval(host, skill, sourceIP)
+	status := p.checkApproval(host, req.URL.Path, skill, sourceIP)
 	if status != approval.StatusApproved {
 		p.Logger.Add(proxylog.Entry{
 			SkillID: sid,
