@@ -18,9 +18,11 @@
         <a href="#" data-page="skills">&#x26a1; Skills</a>
         <a href="#" data-page="credentials">&#x1f511; Credentials</a>
         <a href="#" data-page="logs">&#x1f4cb; Logs</a>
+        <a href="#" data-page="settings">&#x2699; Settings</a>
       </nav>
       <div class="sidebar-footer">
         <a href="/ca.crt" class="sidebar-link" download>&#x1f4e5; Download CA Certificate</a>
+        <div id="version-display" class="version-text"></div>
       </div>
     </aside>
 
@@ -52,11 +54,23 @@
           <h2>URL Rules</h2>
           <button class="btn btn-primary" onclick="showAddRule()">+ Add Rule</button>
         </div>
+        <div class="filter-bar">
+          <input type="text" id="filter-url-category" placeholder="Category" onchange="loadApprovals()">
+          <input type="text" id="filter-url-skill" placeholder="Skill ID" onchange="loadApprovals()">
+          <input type="text" id="filter-url-ip" placeholder="Source IP" onchange="loadApprovals()">
+          <select id="filter-url-status" onchange="loadApprovals()">
+            <option value="">All statuses</option>
+            <option value="approved">Approved</option>
+            <option value="denied">Denied</option>
+            <option value="pending">Pending</option>
+          </select>
+          <button class="btn btn-outline btn-sm" onclick="clearFilters('url')">Clear</button>
+        </div>
         <div class="card">
           <table>
-            <thead><tr><th>Host</th><th>Path Prefix</th><th>Skill</th><th>Source IP</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Host</th><th>Path Prefix</th><th>Category</th><th>Skill</th><th>Source IP</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead>
             <tbody id="approvals-tbody">
-              <tr><td colspan="7" class="empty-state">No URL rules</td></tr>
+              <tr><td colspan="8" class="empty-state">No URL rules</td></tr>
             </tbody>
           </table>
         </div>
@@ -68,11 +82,23 @@
           <h2>Image Approvals</h2>
           <button class="btn btn-primary" onclick="showAddImageRule()">+ Add Image Rule</button>
         </div>
+        <div class="filter-bar">
+          <input type="text" id="filter-image-category" placeholder="Category" onchange="loadImages()">
+          <input type="text" id="filter-image-skill" placeholder="Skill ID" onchange="loadImages()">
+          <input type="text" id="filter-image-ip" placeholder="Source IP" onchange="loadImages()">
+          <select id="filter-image-status" onchange="loadImages()">
+            <option value="">All statuses</option>
+            <option value="approved">Approved</option>
+            <option value="denied">Denied</option>
+            <option value="pending">Pending</option>
+          </select>
+          <button class="btn btn-outline btn-sm" onclick="clearFilters('image')">Clear</button>
+        </div>
         <div class="card">
           <table>
-            <thead><tr><th>Repository</th><th>Skill</th><th>Source IP</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Repository</th><th>Category</th><th>Skill</th><th>Source IP</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead>
             <tbody id="images-tbody">
-              <tr><td colspan="6" class="empty-state">No image approval records</td></tr>
+              <tr><td colspan="7" class="empty-state">No image approval records</td></tr>
             </tbody>
           </table>
         </div>
@@ -124,6 +150,46 @@
           </div>
         </div>
       </div>
+
+      <!-- Settings -->
+      <div id="page-settings" class="page">
+        <h2>Settings</h2>
+        <div class="card">
+          <h3>SSH Access</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">SSH Server</div>
+              <div class="setting-desc">Enable or disable SSH access to this appliance.</div>
+            </div>
+            <div class="setting-control">
+              <span id="ssh-status" class="badge-status">loading...</span>
+              <button id="ssh-toggle-btn" class="btn btn-outline btn-sm" onclick="toggleSSH()" disabled>Toggle</button>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>System</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Upgrade</div>
+              <div class="setting-desc">Upgrade the system using an OCI image. The system will reboot after upgrade.</div>
+            </div>
+            <div class="setting-control">
+              <input type="text" id="upgrade-image" placeholder="ghcr.io/olljanat-ai/firewall4ai:v1.0" style="width:320px">
+              <button class="btn btn-primary btn-sm" onclick="doUpgrade()">Upgrade</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Reboot</div>
+              <div class="setting-desc">Reboot the appliance immediately.</div>
+            </div>
+            <div class="setting-control">
+              <button class="btn btn-danger btn-sm" onclick="doReboot()">Reboot</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </main>
   </div>
 
@@ -165,6 +231,10 @@
           <option value="approved">Approve</option>
           <option value="denied">Deny</option>
         </select>
+      </div>
+      <div class="form-group">
+        <label>Category (optional)</label>
+        <input type="text" id="rule-category" placeholder="e.g., development, production, testing">
       </div>
       <div class="form-group">
         <label>Note (optional)</label>
@@ -313,6 +383,10 @@
           <option value="approved">Approve</option>
           <option value="denied">Deny</option>
         </select>
+      </div>
+      <div class="form-group">
+        <label>Category (optional)</label>
+        <input type="text" id="image-rule-category" placeholder="e.g., base-images, tools, applications">
       </div>
       <div class="form-group">
         <label>Note (optional)</label>

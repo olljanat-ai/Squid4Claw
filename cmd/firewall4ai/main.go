@@ -115,6 +115,7 @@ func main() {
 		Credentials:    creds,
 		Logger:         logger,
 		SaveFunc:       saveFunc,
+		Version:        Version,
 	}
 	apiHandler.RegisterRoutes(adminMux)
 

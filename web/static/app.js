@@ -27,6 +27,7 @@ function navigate(page) {
   if (page === 'skills') loadSkills();
   if (page === 'credentials') loadCredentials();
   if (page === 'logs') loadLogs();
+  if (page === 'settings') loadSettings();
 }
 
 // --- API helpers ---
@@ -137,6 +138,42 @@ async function decideDash(apiPath, host, skillID, sourceIP, pathPrefix, status) 
   }
 }
 
+// --- Filtering ---
+function getFilter(prefix) {
+  return {
+    category: (document.getElementById('filter-' + prefix + '-category')?.value || '').toLowerCase(),
+    skill: (document.getElementById('filter-' + prefix + '-skill')?.value || '').toLowerCase(),
+    ip: (document.getElementById('filter-' + prefix + '-ip')?.value || '').toLowerCase(),
+    status: document.getElementById('filter-' + prefix + '-status')?.value || '',
+  };
+}
+
+function matchesFilter(item, filter) {
+  if (filter.category && !(item.category || '').toLowerCase().includes(filter.category)) return false;
+  if (filter.skill && !(item.skill_id || '').toLowerCase().includes(filter.skill)) return false;
+  if (filter.ip && !(item.source_ip || '').toLowerCase().includes(filter.ip)) return false;
+  if (filter.status && item.status !== filter.status) return false;
+  return true;
+}
+
+function clearFilters(prefix) {
+  const cat = document.getElementById('filter-' + prefix + '-category');
+  const skill = document.getElementById('filter-' + prefix + '-skill');
+  const ip = document.getElementById('filter-' + prefix + '-ip');
+  const status = document.getElementById('filter-' + prefix + '-status');
+  if (cat) cat.value = '';
+  if (skill) skill.value = '';
+  if (ip) ip.value = '';
+  if (status) status.value = '';
+  if (prefix === 'url') loadApprovals();
+  if (prefix === 'image') loadImages();
+}
+
+function formatCategory(category) {
+  if (!category) return '<span class="badge-status" style="opacity:0.4">-</span>';
+  return '<span class="category-badge">' + esc(category) + '</span>';
+}
+
 // --- URL Rules (Approvals) ---
 async function loadApprovals() {
   try {
@@ -150,20 +187,24 @@ async function loadApprovals() {
     } else {
       badge.style.display = 'none';
     }
+    const filter = getFilter('url');
+    const filtered = currentApprovals.filter(a => matchesFilter(a, filter));
     const tbody = document.getElementById('approvals-tbody');
     tbody.innerHTML = '';
-    if (currentApprovals.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No URL rules</td></tr>';
+    if (filtered.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No URL rules</td></tr>';
       return;
     }
-    currentApprovals.sort((a, b) => {
+    filtered.sort((a, b) => {
       const order = { pending: 0, approved: 1, denied: 2 };
       return (order[a.status] || 9) - (order[b.status] || 9);
     });
-    currentApprovals.forEach((a, idx) => {
+    filtered.forEach((a) => {
+      const idx = currentApprovals.indexOf(a);
       const skillDisplay = formatSkillID(a.skill_id);
       const sourceDisplay = formatSourceIP(a.source_ip);
       const pathDisplay = formatPathPrefix(a.path_prefix);
+      const categoryDisplay = formatCategory(a.category);
       const pp = a.path_prefix || '';
       const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditRule(${idx})" title="Edit rule">Edit</button>`;
       const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteApproval('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}')" title="Delete rule">Delete</button>`;
@@ -188,6 +229,7 @@ async function loadApprovals() {
       tbody.innerHTML += `<tr>
         <td><strong>${esc(a.host)}</strong></td>
         <td>${pathDisplay}</td>
+        <td>${categoryDisplay}</td>
         <td>${skillDisplay}</td>
         <td>${sourceDisplay}</td>
         <td><span class="badge-status ${a.status}">${a.status}</span></td>
@@ -252,6 +294,7 @@ function showAddRule() {
   document.getElementById('rule-source-ip').value = '';
   document.getElementById('rule-skill-id').value = '';
   document.getElementById('rule-status').value = 'approved';
+  document.getElementById('rule-category').value = '';
   document.getElementById('rule-note').value = '';
   updateRuleFields();
   document.getElementById('modal-rule').classList.add('active');
@@ -276,6 +319,7 @@ function showEditRule(idx) {
     document.getElementById('rule-level').value = 'global';
   }
   document.getElementById('rule-status').value = a.status === 'pending' ? 'approved' : a.status;
+  document.getElementById('rule-category').value = a.category || '';
   document.getElementById('rule-note').value = a.note || '';
   updateRuleFields();
   document.getElementById('modal-rule').classList.add('active');
@@ -298,6 +342,7 @@ async function submitRule() {
   const pathPrefix = document.getElementById('rule-path-prefix').value.trim();
   const level = document.getElementById('rule-level').value;
   const status = document.getElementById('rule-status').value;
+  const category = document.getElementById('rule-category').value.trim();
   const note = document.getElementById('rule-note').value.trim();
   let sourceIP = '';
   let skillID = '';
@@ -325,7 +370,7 @@ async function submitRule() {
         });
       }
     }
-    await api('POST', '/api/approvals/decide', { host, skill_id: skillID, source_ip: sourceIP, path_prefix: pathPrefix, status, note });
+    await api('POST', '/api/approvals/decide', { host, skill_id: skillID, source_ip: sourceIP, path_prefix: pathPrefix, category, status, note });
     hideAddRule();
     loadApprovals();
   } catch (e) {
@@ -346,19 +391,23 @@ async function loadImages() {
     } else {
       badge.style.display = 'none';
     }
+    const filter = getFilter('image');
+    const filtered = currentImages.filter(a => matchesFilter(a, filter));
     const tbody = document.getElementById('images-tbody');
     tbody.innerHTML = '';
-    if (currentImages.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No image approval records</td></tr>';
+    if (filtered.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No image approval records</td></tr>';
       return;
     }
-    currentImages.sort((a, b) => {
+    filtered.sort((a, b) => {
       const order = { pending: 0, approved: 1, denied: 2 };
       return (order[a.status] || 9) - (order[b.status] || 9);
     });
-    currentImages.forEach((a, idx) => {
+    filtered.forEach((a) => {
+      const idx = currentImages.indexOf(a);
       const skillDisplay = formatSkillID(a.skill_id);
       const sourceDisplay = formatSourceIP(a.source_ip);
+      const categoryDisplay = formatCategory(a.category);
       const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditImageRule(${idx})" title="Edit rule">Edit</button>`;
       const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}')" title="Delete rule">Delete</button>`;
       let actions = '';
@@ -381,6 +430,7 @@ async function loadImages() {
       }
       tbody.innerHTML += `<tr>
         <td><strong>${esc(a.host)}</strong></td>
+        <td>${categoryDisplay}</td>
         <td>${skillDisplay}</td>
         <td>${sourceDisplay}</td>
         <td><span class="badge-status ${a.status}">${a.status}</span></td>
@@ -443,6 +493,7 @@ function showAddImageRule() {
   document.getElementById('image-rule-level').value = 'global';
   document.getElementById('image-rule-source-ip').value = '';
   document.getElementById('image-rule-status').value = 'approved';
+  document.getElementById('image-rule-category').value = '';
   document.getElementById('image-rule-note').value = '';
   updateImageRuleFields();
   document.getElementById('modal-image-rule').classList.add('active');
@@ -462,6 +513,7 @@ function showEditImageRule(idx) {
     document.getElementById('image-rule-level').value = 'global';
   }
   document.getElementById('image-rule-status').value = a.status === 'pending' ? 'approved' : a.status;
+  document.getElementById('image-rule-category').value = a.category || '';
   document.getElementById('image-rule-note').value = a.note || '';
   updateImageRuleFields();
   document.getElementById('modal-image-rule').classList.add('active');
@@ -482,6 +534,7 @@ async function submitImageRule() {
   if (!host) { alert('Image pattern is required'); return; }
   const level = document.getElementById('image-rule-level').value;
   const status = document.getElementById('image-rule-status').value;
+  const category = document.getElementById('image-rule-category').value.trim();
   const note = document.getElementById('image-rule-note').value.trim();
   let sourceIP = '';
   if (level === 'vm') {
@@ -499,7 +552,7 @@ async function submitImageRule() {
         });
       }
     }
-    await api('POST', '/api/images/decide', { host, skill_id: '', source_ip: sourceIP, status, note });
+    await api('POST', '/api/images/decide', { host, skill_id: '', source_ip: sourceIP, category, status, note });
     hideImageRuleModal();
     loadImages();
   } catch (e) {
@@ -915,6 +968,64 @@ function timeAgo(ts) {
   return Math.floor(seconds / 86400) + 'd ago';
 }
 
+// --- Settings ---
+async function loadSettings() {
+  try {
+    const data = await api('GET', '/api/settings/ssh');
+    const statusEl = document.getElementById('ssh-status');
+    const btn = document.getElementById('ssh-toggle-btn');
+    statusEl.textContent = data.enabled ? 'enabled' : 'disabled';
+    statusEl.className = 'badge-status ' + (data.enabled ? 'approved' : 'denied');
+    btn.textContent = data.enabled ? 'Disable' : 'Enable';
+    btn.disabled = false;
+  } catch (e) {
+    console.error('Settings load error:', e);
+  }
+}
+
+async function toggleSSH() {
+  const statusEl = document.getElementById('ssh-status');
+  const isEnabled = statusEl.textContent === 'enabled';
+  if (!confirm(isEnabled ? 'Disable SSH access?' : 'Enable SSH access?')) return;
+  try {
+    await api('POST', '/api/settings/ssh', { enabled: !isEnabled });
+    loadSettings();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function doUpgrade() {
+  const image = document.getElementById('upgrade-image').value.trim();
+  if (!image) { alert('OCI image is required'); return; }
+  if (!confirm('Upgrade to ' + image + '? The system will reboot after upgrade.')) return;
+  try {
+    await api('POST', '/api/system/upgrade', { image });
+    alert('Upgrade started. The system will reboot when complete.');
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function doReboot() {
+  if (!confirm('Reboot the appliance now?')) return;
+  try {
+    await api('POST', '/api/system/reboot', {});
+    alert('Rebooting...');
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function loadVersion() {
+  try {
+    const data = await api('GET', '/api/version');
+    document.getElementById('version-display').textContent = 'v' + (data.version || 'unknown');
+  } catch (e) {
+    // ignore
+  }
+}
+
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.sidebar nav a').forEach(a => {
@@ -925,4 +1036,5 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   navigate('dashboard');
   startPolling();
+  loadVersion();
 });

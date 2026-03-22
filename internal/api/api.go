@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/olljanat-ai/firewall4ai/internal/approval"
@@ -22,6 +24,7 @@ type Handler struct {
 	Credentials    *credentials.Manager
 	Logger         *proxylog.Logger
 	SaveFunc       func() error // called after state mutations to persist
+	Version        string       // build version string
 }
 
 // RegisterRoutes sets up all API routes on the given mux.
@@ -30,6 +33,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/approvals", h.listApprovals)
 	mux.HandleFunc("GET /api/approvals/pending", h.listPending)
 	mux.HandleFunc("POST /api/approvals/decide", h.decideApproval)
+	mux.HandleFunc("PUT /api/approvals/category", h.setApprovalCategory)
 	mux.HandleFunc("DELETE /api/approvals", h.deleteApproval)
 
 	// Skills
@@ -48,6 +52,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/images", h.listImageApprovals)
 	mux.HandleFunc("GET /api/images/pending", h.listPendingImages)
 	mux.HandleFunc("POST /api/images/decide", h.decideImageApproval)
+	mux.HandleFunc("PUT /api/images/category", h.setImageCategory)
 	mux.HandleFunc("DELETE /api/images", h.deleteImageApproval)
 
 	// Logs
@@ -56,6 +61,15 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// Health
 	mux.HandleFunc("GET /api/health", h.health)
+
+	// Version
+	mux.HandleFunc("GET /api/version", h.getVersion)
+
+	// System settings
+	mux.HandleFunc("GET /api/settings/ssh", h.getSSHStatus)
+	mux.HandleFunc("POST /api/settings/ssh", h.setSSHStatus)
+	mux.HandleFunc("POST /api/system/upgrade", h.systemUpgrade)
+	mux.HandleFunc("POST /api/system/reboot", h.systemReboot)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -84,6 +98,7 @@ type decisionRequest struct {
 	SkillID    string          `json:"skill_id"`
 	SourceIP   string          `json:"source_ip"`
 	PathPrefix string          `json:"path_prefix"`
+	Category   string          `json:"category"`
 	Status     approval.Status `json:"status"`
 	Note       string          `json:"note"`
 }
@@ -99,6 +114,9 @@ func (h *Handler) decideApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Approvals.Decide(req.Host, req.SkillID, req.SourceIP, req.PathPrefix, req.Status, req.Note)
+	if req.Category != "" {
+		h.Approvals.SetCategory(req.Host, req.SkillID, req.SourceIP, req.PathPrefix, req.Category)
+	}
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
@@ -121,6 +139,36 @@ func (h *Handler) deleteApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Approvals.Delete(req.Host, req.SkillID, req.SourceIP, req.PathPrefix)
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
+}
+
+type setCategoryRequest struct {
+	Host       string `json:"host"`
+	SkillID    string `json:"skill_id"`
+	SourceIP   string `json:"source_ip"`
+	PathPrefix string `json:"path_prefix"`
+	Category   string `json:"category"`
+}
+
+func (h *Handler) setApprovalCategory(w http.ResponseWriter, r *http.Request) {
+	var req setCategoryRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	h.Approvals.SetCategory(req.Host, req.SkillID, req.SourceIP, req.PathPrefix, req.Category)
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
+}
+
+func (h *Handler) setImageCategory(w http.ResponseWriter, r *http.Request) {
+	var req setCategoryRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	h.ImageApprovals.SetCategory(req.Host, req.SkillID, req.SourceIP, "", req.Category)
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
@@ -312,6 +360,9 @@ func (h *Handler) decideImageApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.ImageApprovals.Decide(req.Host, req.SkillID, req.SourceIP, "", req.Status, req.Note)
+	if req.Category != "" {
+		h.ImageApprovals.SetCategory(req.Host, req.SkillID, req.SourceIP, "", req.Category)
+	}
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
@@ -361,6 +412,71 @@ func (h *Handler) getLogStats(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// --- Version ---
+
+func (h *Handler) getVersion(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"version": h.Version})
+}
+
+// --- System Settings ---
+
+func (h *Handler) getSSHStatus(w http.ResponseWriter, r *http.Request) {
+	out, err := exec.Command("systemctl", "is-active", "ssh").Output()
+	status := strings.TrimSpace(string(out))
+	enabled := status == "active"
+	if err != nil && status == "" {
+		status = "inactive"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": enabled, "status": status})
+}
+
+func (h *Handler) setSSHStatus(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	action := "stop"
+	if req.Enabled {
+		action = "start"
+	}
+	if out, err := exec.Command("systemctl", action, "ssh").CombinedOutput(); err != nil {
+		http.Error(w, fmt.Sprintf("failed to %s ssh: %s", action, string(out)), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": req.Enabled})
+}
+
+func (h *Handler) systemUpgrade(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Image string `json:"image"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Image == "" {
+		http.Error(w, "image is required", http.StatusBadRequest)
+		return
+	}
+	// Run upgrade in background since it will reboot.
+	go func() {
+		exec.Command("elemental", "upgrade", "--reboot", "--system", "oci:"+req.Image).Run()
+	}()
+	writeJSON(w, http.StatusOK, map[string]string{"result": "upgrade started"})
+}
+
+func (h *Handler) systemReboot(w http.ResponseWriter, r *http.Request) {
+	// Send response before rebooting.
+	writeJSON(w, http.StatusOK, map[string]string{"result": "rebooting"})
+	go func() {
+		time.Sleep(1 * time.Second)
+		exec.Command("reboot").Run()
+	}()
 }
 
 func (h *Handler) save() {
