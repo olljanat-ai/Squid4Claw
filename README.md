@@ -18,6 +18,7 @@ Agents need **no proxy configuration** - all HTTP/HTTPS traffic is intercepted t
 - **Pre-approved hosts** - Configure allowed hosts per skill to skip manual approval
 - **Credential injection** - Inject API keys, bearer tokens, basic auth, or query parameters into requests on behalf of agents
 - **Admin UI** - Modern web interface (always HTTPS) for managing approvals, skills, credentials, and viewing logs
+- **Container registry mirror** - Acts as a Docker Registry V2 pull-through proxy for Docker Hub, ghcr.io, and other registries with per-image approval
 - **Real-time logging** - All proxy requests (including decrypted HTTPS) are logged and visible in the admin UI
 
 ## Network Architecture
@@ -40,6 +41,7 @@ Agents need **no proxy configuration** - all HTTP/HTTPS traffic is intercepted t
                     |  |  Proxy HTTP     :8080            |  |
                     |  |  Transparent TLS:8443            |  |
                     |  |  Admin UI       :443 (HTTPS)     |  |
+                    |  |  Registry Mirror:5000+ (HTTPS)   |  |
                     |  +----------------------------------+  |
                     |                                        |
                     |  +----------------------------------+  |
@@ -97,6 +99,7 @@ Agent VM                      Firewall4AI VM                   Internet
 | Agent -> Firewall4AI | eth1 | DHCP (:67) | ACCEPT |
 | Agent -> Firewall4AI | eth1 | Proxy (:8080) | ACCEPT |
 | Agent -> Firewall4AI | eth1 | Transparent TLS (:8443) | ACCEPT |
+| Agent -> Firewall4AI | eth1 | Registry Mirror (:5000-5099) | ACCEPT |
 | Agent -> Firewall4AI | eth1 | ICMP | ACCEPT |
 | Agent -> Firewall4AI | eth1 | anything else | REJECT |
 | Agent -> Internet | eth1 | FORWARD | REJECT |
@@ -148,7 +151,11 @@ Create a `config.json` file (all fields optional):
   "data_dir": "./data",
   "tls_cert_file": "",
   "tls_key_file": "",
-  "max_log_entries": 10000
+  "max_log_entries": 10000,
+  "registries": [
+    {"name": "docker.io", "upstream": "https://registry-1.docker.io", "port": 5000},
+    {"name": "ghcr.io", "upstream": "https://ghcr.io", "port": 5001}
+  ]
 }
 ```
 
@@ -161,6 +168,7 @@ Create a `config.json` file (all fields optional):
 | `tls_cert_file` | (empty) | Custom TLS certificate for admin server (auto-generated if empty) |
 | `tls_key_file` | (empty) | Custom TLS key for admin server (auto-generated if empty) |
 | `max_log_entries` | `10000` | Maximum log entries kept in memory |
+| `registries` | `[]` | Container registry mirrors (each with `name`, `upstream` URL, and `port`) |
 
 ## Trusting the CA Certificate
 For TLS MITM inspection to work, the AI agent's environment must trust the Firewall4AI CA. The CA certificate is at `<data_dir>/ca.crt`.
@@ -247,6 +255,40 @@ Configure credentials in the admin UI to automatically inject authentication int
 
 Credentials can be scoped to specific hosts (with wildcard support like `*.example.com`) and specific skills.
 
+### Container Registry Mirror
+Firewall4AI can act as a pull-through mirror for Docker Hub, ghcr.io, and other container registries. Each configured registry gets its own HTTPS listener port. Image pulls require admin approval, just like URL access.
+
+#### Agent VM Docker Configuration
+Configure Docker to use the Firewall4AI mirror for Docker Hub:
+```json
+{
+  "registry-mirrors": ["https://10.255.255.1:5000"]
+}
+```
+
+For containerd (used by k3s, modern Docker), configure per-registry mirrors:
+```toml
+[plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
+  endpoint = ["https://10.255.255.1:5000"]
+[plugins."io.containerd.grpc.v1.cri".registry.mirrors."ghcr.io"]
+  endpoint = ["https://10.255.255.1:5001"]
+```
+
+Agent VMs must trust the Firewall4AI CA certificate (same requirement as for HTTPS inspection).
+
+#### Image Approval Flow
+When an agent pulls an image (e.g., `docker pull ubuntu:latest`):
+1. The request hits the registry mirror
+2. The mirror extracts the image reference (`docker.io/library/ubuntu:latest`)
+3. If no approval exists, a pending entry appears in the admin UI
+4. Admin approves or denies the image pull
+5. Wildcard patterns are supported for pre-approving images:
+   - `docker.io/library/*` — all official Docker Hub images
+   - `docker.io/library/ubuntu:*` — any tag of ubuntu
+   - `ghcr.io/myorg/*` — all images from a GitHub organization
+
+Image approvals use the same three-level system as host approvals (global, VM-specific, skill-specific) and are managed via the **Images** tab in the admin UI.
+
 ### Explicit Proxy Mode (Backward Compatible)
 Agents can still be configured to use the proxy explicitly if preferred:
 ```bash
@@ -271,6 +313,14 @@ Both transparent and explicit proxy modes work simultaneously.
 | `GET` | `/api/approvals` | List all approvals |
 | `GET` | `/api/approvals/pending` | List pending approvals |
 | `POST` | `/api/approvals/decide` | Approve or deny a host (empty `skill_id` + empty `source_ip` = global, empty `skill_id` + `source_ip` = VM-specific) |
+
+### Image Approvals (Container Registry)
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/images` | List all image approvals |
+| `GET` | `/api/images/pending` | List pending image approvals |
+| `POST` | `/api/images/decide` | Approve or deny an image (same level semantics as host approvals) |
+| `DELETE` | `/api/images` | Delete an image approval rule |
 
 ### Credentials
 | Method | Path | Description |
