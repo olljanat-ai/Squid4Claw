@@ -6,15 +6,23 @@ import (
 	"sync"
 )
 
+// RegistryConfig describes one upstream container registry to mirror.
+type RegistryConfig struct {
+	Name     string `json:"name"`     // e.g., "docker.io"
+	Upstream string `json:"upstream"` // e.g., "https://registry-1.docker.io"
+	Port     int    `json:"port"`     // e.g., 5000
+}
+
 // Config holds the main application configuration.
 type Config struct {
-	ListenAddr         string `json:"listen_addr"`
-	AdminAddr          string `json:"admin_addr"`
-	TransparentTLSAddr string `json:"transparent_tls_addr"`
-	DataDir            string `json:"data_dir"`
-	TLSCertFile        string `json:"tls_cert_file"`
-	TLSKeyFile         string `json:"tls_key_file"`
-	MaxLogEntries      int    `json:"max_log_entries"`
+	ListenAddr         string           `json:"listen_addr"`
+	AdminAddr          string           `json:"admin_addr"`
+	TransparentTLSAddr string           `json:"transparent_tls_addr"`
+	DataDir            string           `json:"data_dir"`
+	TLSCertFile        string           `json:"tls_cert_file"`
+	TLSKeyFile         string           `json:"tls_key_file"`
+	MaxLogEntries      int              `json:"max_log_entries"`
+	Registries         []RegistryConfig `json:"registries"`
 }
 
 var (

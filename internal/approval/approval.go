@@ -256,6 +256,28 @@ func (m *Manager) LoadApprovals(approvals []HostApproval) {
 	}
 }
 
+// CheckExistingWithMatcher is like CheckExistingWithWildcards but uses a
+// caller-provided match function instead of MatchHost. This allows the
+// registry package to use image-reference-specific pattern matching.
+func (m *Manager) CheckExistingWithMatcher(host, skillID, sourceIP string, matcher func(pattern, host string) bool) (Status, bool) {
+	// Try exact match first (fast path).
+	if status, ok := m.CheckExisting(host, skillID, sourceIP); ok {
+		return status, true
+	}
+	// Scan for patterns using the custom matcher.
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, a := range m.approvals {
+		if a.SkillID != skillID || a.SourceIP != sourceIP {
+			continue
+		}
+		if a.Host != host && matcher(a.Host, host) {
+			return a.Status, true
+		}
+	}
+	return "", false
+}
+
 // Delete removes an approval entry.
 func (m *Manager) Delete(host, skillID, sourceIP string) {
 	k := key(host, skillID, sourceIP)

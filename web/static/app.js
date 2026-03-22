@@ -11,6 +11,7 @@ function navigate(page) {
   document.querySelector(`[data-page="${page}"]`).classList.add('active');
   if (page === 'dashboard') loadDashboard();
   if (page === 'approvals') loadApprovals();
+  if (page === 'images') loadImages();
   if (page === 'skills') loadSkills();
   if (page === 'credentials') loadCredentials();
   if (page === 'logs') loadLogs();
@@ -43,17 +44,18 @@ function formatSourceIP(sourceIP) {
 // --- Dashboard ---
 async function loadDashboard() {
   try {
-    const [stats, pending, skills] = await Promise.all([
+    const [stats, pending, pendingImages, skills] = await Promise.all([
       api('GET', '/api/logs/stats'),
       api('GET', '/api/approvals/pending'),
+      api('GET', '/api/images/pending'),
       api('GET', '/api/skills'),
     ]);
     document.getElementById('stat-total').textContent = stats.total || 0;
     document.getElementById('stat-allowed').textContent = stats.allowed || 0;
     document.getElementById('stat-denied').textContent = stats.denied || 0;
     document.getElementById('stat-pending').textContent = stats.pending || 0;
-    document.getElementById('pending-count').textContent = pending.length || 0;
-    // Update sidebar badge
+    document.getElementById('pending-count').textContent = (pending.length || 0) + (pendingImages.length || 0);
+    // Update sidebar badges
     const badge = document.getElementById('approval-badge');
     if (pending.length > 0) {
       badge.textContent = pending.length;
@@ -61,21 +63,34 @@ async function loadDashboard() {
     } else {
       badge.style.display = 'none';
     }
-    // Recent pending
+    const imageBadge = document.getElementById('image-badge');
+    if (pendingImages.length > 0) {
+      imageBadge.textContent = pendingImages.length;
+      imageBadge.style.display = 'inline';
+    } else {
+      imageBadge.style.display = 'none';
+    }
+    // Recent pending (hosts + images combined)
     const tbody = document.getElementById('dash-pending-tbody');
     tbody.innerHTML = '';
-    if (!pending || pending.length === 0) {
+    const allPending = [
+      ...(pending || []).map(a => ({ ...a, _type: 'host' })),
+      ...(pendingImages || []).map(a => ({ ...a, _type: 'image' })),
+    ];
+    if (allPending.length === 0) {
       tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No pending approvals</td></tr>';
     } else {
-      pending.slice(0, 5).forEach(a => {
+      allPending.slice(0, 10).forEach(a => {
         const skillDisplay = formatSkillID(a.skill_id);
         const sourceDisplay = formatSourceIP(a.source_ip);
-        const approveBtn = `<button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>`;
-        const vmBtn = a.source_ip ? `<button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','','${esc(a.source_ip)}','approved')" title="Approve for this VM">Approve VM</button>` : '';
-        const globalBtn = (a.skill_id || a.source_ip) ? `<button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','','','approved')" title="Approve for all agents">Approve Global</button>` : '';
-        const denyBtn = `<button class="btn btn-danger btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>`;
+        const apiPath = a._type === 'image' ? '/api/images/decide' : '/api/approvals/decide';
+        const typeLabel = a._type === 'image' ? '<span class="badge-status pending">image</span> ' : '';
+        const approveBtn = `<button class="btn btn-success btn-sm" onclick="decideDash('${apiPath}','${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>`;
+        const vmBtn = a.source_ip ? `<button class="btn btn-success btn-sm" onclick="decideDash('${apiPath}','${esc(a.host)}','','${esc(a.source_ip)}','approved')" title="Approve for this VM">Approve VM</button>` : '';
+        const globalBtn = (a.skill_id || a.source_ip) ? `<button class="btn btn-success btn-sm" onclick="decideDash('${apiPath}','${esc(a.host)}','','','approved')" title="Approve for all agents">Approve Global</button>` : '';
+        const denyBtn = `<button class="btn btn-danger btn-sm" onclick="decideDash('${apiPath}','${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>`;
         tbody.innerHTML += `<tr>
-          <td><strong>${esc(a.host)}</strong></td>
+          <td>${typeLabel}<strong>${esc(a.host)}</strong></td>
           <td>${skillDisplay}</td>
           <td>${sourceDisplay}</td>
           <td>${timeAgo(a.created_at)}</td>
@@ -85,6 +100,19 @@ async function loadDashboard() {
     }
   } catch (e) {
     console.error('Dashboard load error:', e);
+  }
+}
+
+async function decideDash(apiPath, host, skillID, sourceIP, status) {
+  try {
+    await api('POST', apiPath, { host, skill_id: skillID, source_ip: sourceIP, status });
+    const activePage = document.querySelector('.page.active');
+    if (activePage) {
+      const pageId = activePage.id.replace('page-', '');
+      navigate(pageId);
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
   }
 }
 
@@ -223,6 +251,145 @@ async function addRule() {
     await api('POST', '/api/approvals/decide', { host, skill_id: '', source_ip: sourceIP, status, note });
     hideAddRule();
     loadApprovals();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+// --- Images ---
+async function loadImages() {
+  try {
+    const images = await api('GET', '/api/images');
+    const pending = (images || []).filter(a => a.status === 'pending');
+    const badge = document.getElementById('image-badge');
+    if (pending.length > 0) {
+      badge.textContent = pending.length;
+      badge.style.display = 'inline';
+    } else {
+      badge.style.display = 'none';
+    }
+    const tbody = document.getElementById('images-tbody');
+    tbody.innerHTML = '';
+    if (!images || images.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No image approval records</td></tr>';
+      return;
+    }
+    images.sort((a, b) => {
+      const order = { pending: 0, approved: 1, denied: 2 };
+      return (order[a.status] || 9) - (order[b.status] || 9);
+    });
+    images.forEach(a => {
+      const skillDisplay = formatSkillID(a.skill_id);
+      const sourceDisplay = formatSourceIP(a.source_ip);
+      const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}')" title="Delete rule">Delete</button>`;
+      let actions = '';
+      if (a.status === 'pending') {
+        const vmBtn = a.source_ip
+          ? `<button class="btn btn-outline btn-sm" onclick="decideImage('${esc(a.host)}','','${esc(a.source_ip)}','approved')" title="Approve for this VM">VM</button>` : '';
+        const globalBtn = (a.skill_id || a.source_ip)
+          ? `<button class="btn btn-outline btn-sm" onclick="decideImage('${esc(a.host)}','','','approved')" title="Approve for all agents">Global</button>` : '';
+        actions = `<button class="btn btn-success btn-sm" onclick="decideImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+           ${vmBtn} ${globalBtn}
+           <button class="btn btn-danger btn-sm" onclick="decideImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
+           ${deleteBtn}`;
+      } else {
+        const promoteBtn = a.source_ip && !a.skill_id
+          ? `<button class="btn btn-outline btn-sm" onclick="promoteImageToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
+        actions = `<button class="btn btn-outline btn-sm" onclick="decideImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+           <button class="btn btn-outline btn-sm" onclick="decideImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
+           ${promoteBtn}
+           ${deleteBtn}`;
+      }
+      tbody.innerHTML += `<tr>
+        <td><strong>${esc(a.host)}</strong></td>
+        <td>${skillDisplay}</td>
+        <td>${sourceDisplay}</td>
+        <td><span class="badge-status ${a.status}">${a.status}</span></td>
+        <td>${timeAgo(a.updated_at)}</td>
+        <td>${actions}</td>
+      </tr>`;
+    });
+  } catch (e) {
+    console.error('Images load error:', e);
+  }
+}
+
+async function decideImage(host, skillID, sourceIP, status) {
+  try {
+    await api('POST', '/api/images/decide', { host, skill_id: skillID, source_ip: sourceIP, status });
+    const activePage = document.querySelector('.page.active');
+    if (activePage) {
+      const pageId = activePage.id.replace('page-', '');
+      navigate(pageId);
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function deleteImage(host, skillID, sourceIP) {
+  if (!confirm(`Delete image rule for "${host}"?`)) return;
+  try {
+    await api('DELETE', '/api/images', { host, skill_id: skillID, source_ip: sourceIP });
+    const activePage = document.querySelector('.page.active');
+    if (activePage) {
+      const pageId = activePage.id.replace('page-', '');
+      navigate(pageId);
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function promoteImageToGlobal(host, sourceIP, status) {
+  if (!confirm(`Promote "${host}" from VM ${sourceIP} to a global rule?`)) return;
+  try {
+    await api('POST', '/api/images/decide', { host, skill_id: '', source_ip: '', status });
+    const activePage = document.querySelector('.page.active');
+    if (activePage) {
+      const pageId = activePage.id.replace('page-', '');
+      navigate(pageId);
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+// --- Add Image Rule ---
+function showAddImageRule() {
+  document.getElementById('modal-image-rule').classList.add('active');
+  updateImageRuleFields();
+}
+function hideAddImageRule() {
+  document.getElementById('modal-image-rule').classList.remove('active');
+  document.getElementById('image-rule-host').value = '';
+  document.getElementById('image-rule-level').value = 'global';
+  document.getElementById('image-rule-source-ip').value = '';
+  document.getElementById('image-rule-status').value = 'approved';
+  document.getElementById('image-rule-note').value = '';
+  updateImageRuleFields();
+}
+
+function updateImageRuleFields() {
+  const level = document.getElementById('image-rule-level').value;
+  document.getElementById('image-rule-vm-fields').style.display = level === 'vm' ? 'block' : 'none';
+}
+
+async function addImageRule() {
+  const host = document.getElementById('image-rule-host').value.trim();
+  if (!host) { alert('Image pattern is required'); return; }
+  const level = document.getElementById('image-rule-level').value;
+  const status = document.getElementById('image-rule-status').value;
+  const note = document.getElementById('image-rule-note').value.trim();
+  let sourceIP = '';
+  if (level === 'vm') {
+    sourceIP = document.getElementById('image-rule-source-ip').value.trim();
+    if (!sourceIP) { alert('Source IP is required for VM-specific rules'); return; }
+  }
+  try {
+    await api('POST', '/api/images/decide', { host, skill_id: '', source_ip: sourceIP, status, note });
+    hideAddImageRule();
+    loadImages();
   } catch (e) {
     alert('Error: ' + e.message);
   }
@@ -416,13 +583,23 @@ function renderLogs(logs) {
 function startPolling() {
   pollInterval = setInterval(async () => {
     try {
-      const pending = await api('GET', '/api/approvals/pending');
+      const [pending, pendingImages] = await Promise.all([
+        api('GET', '/api/approvals/pending'),
+        api('GET', '/api/images/pending'),
+      ]);
       const badge = document.getElementById('approval-badge');
       if (pending && pending.length > 0) {
         badge.textContent = pending.length;
         badge.style.display = 'inline';
       } else {
         badge.style.display = 'none';
+      }
+      const imageBadge = document.getElementById('image-badge');
+      if (pendingImages && pendingImages.length > 0) {
+        imageBadge.textContent = pendingImages.length;
+        imageBadge.style.display = 'inline';
+      } else {
+        imageBadge.style.display = 'none';
       }
       // Poll new logs
       if (document.getElementById('page-logs').classList.contains('active')) {
@@ -446,9 +623,12 @@ function startPolling() {
           });
         }
       }
-      // Refresh dashboard if active
+      // Refresh dashboard or images page if active
       if (document.getElementById('page-dashboard').classList.contains('active')) {
         loadDashboard();
+      }
+      if (document.getElementById('page-images').classList.contains('active')) {
+        loadImages();
       }
     } catch (e) {
       // Silently ignore poll errors

@@ -23,6 +23,7 @@ import (
 	"github.com/olljanat-ai/firewall4ai/internal/credentials"
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 	"github.com/olljanat-ai/firewall4ai/internal/proxy"
+	"github.com/olljanat-ai/firewall4ai/internal/registry"
 	"github.com/olljanat-ai/firewall4ai/internal/store"
 	"github.com/olljanat-ai/firewall4ai/web"
 )
@@ -32,9 +33,10 @@ var Version = "dev"
 
 // storeData holds the persisted state.
 type storeData struct {
-	Skills    []auth.Skill             `json:"skills"`
-	Approvals []approval.HostApproval  `json:"approvals"`
-	Creds     []credentials.Credential `json:"credentials"`
+	Skills         []auth.Skill             `json:"skills"`
+	Approvals      []approval.HostApproval  `json:"approvals"`
+	Creds          []credentials.Credential `json:"credentials"`
+	ImageApprovals []approval.HostApproval  `json:"image_approvals"`
 }
 
 func main() {
@@ -69,6 +71,7 @@ func main() {
 	// Initialize components.
 	skills := auth.NewSkillStore()
 	approvals := approval.NewManager()
+	imageApprovals := approval.NewManager()
 	creds := credentials.NewManager()
 	logger := proxylog.NewLogger(cfg.MaxLogEntries)
 
@@ -76,6 +79,7 @@ func main() {
 	state := dataStore.Get()
 	skills.LoadSkills(state.Skills)
 	approvals.LoadApprovals(state.Approvals)
+	imageApprovals.LoadApprovals(state.ImageApprovals)
 	creds.LoadCredentials(state.Creds)
 
 	// Save function persists current state.
@@ -83,6 +87,7 @@ func main() {
 		return dataStore.Update(func(d *storeData) {
 			d.Skills = skills.ListSkills()
 			d.Approvals = approvals.Export()
+			d.ImageApprovals = imageApprovals.Export()
 			d.Creds = creds.List()
 		})
 	}
@@ -100,11 +105,12 @@ func main() {
 	// Setup admin API + UI server.
 	adminMux := http.NewServeMux()
 	apiHandler := &api.Handler{
-		Skills:      skills,
-		Approvals:   approvals,
-		Credentials: creds,
-		Logger:      logger,
-		SaveFunc:    saveFunc,
+		Skills:         skills,
+		Approvals:      approvals,
+		ImageApprovals: imageApprovals,
+		Credentials:    creds,
+		Logger:         logger,
+		SaveFunc:       saveFunc,
 	}
 	apiHandler.RegisterRoutes(adminMux)
 
@@ -163,6 +169,30 @@ func main() {
 		}
 	}()
 
+	// Start container registry mirror servers.
+	var registryServers []*http.Server
+	for _, regCfg := range cfg.Registries {
+		regProxy := registry.New(regCfg, imageApprovals, skills, logger)
+
+		regTLSConfig := ca.TLSConfigForMITM()
+		regTLSConfig.MinVersion = tls.VersionTLS12
+
+		regServer := &http.Server{
+			Addr:         fmt.Sprintf(":%d", regCfg.Port),
+			Handler:      regProxy,
+			TLSConfig:    regTLSConfig,
+			ReadTimeout:  30 * time.Second,
+			WriteTimeout: 10 * time.Minute,
+		}
+		registryServers = append(registryServers, regServer)
+		go func(rs *http.Server, name string, port int) {
+			log.Printf("Registry mirror for %s listening on :%d", name, port)
+			if err := rs.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("Registry mirror %s error: %v", name, err)
+			}
+		}(regServer, regCfg.Name, regCfg.Port)
+	}
+
 	// Graceful shutdown.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -180,6 +210,9 @@ func main() {
 	transparentListener.Close()
 	proxyServer.Shutdown(ctx)
 	adminServer.Shutdown(ctx)
+	for _, rs := range registryServers {
+		rs.Shutdown(ctx)
+	}
 	log.Println("Stopped.")
 }
 
