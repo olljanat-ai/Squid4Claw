@@ -65,6 +65,7 @@ elemental upgrade --reboot --system oci:ghcr.io/olljanat-ai/firewall4ai:<version
 ## Key Design Decisions
 - **Transparent proxy mode**: iptables REDIRECT intercepts agent traffic; no proxy config needed on agent VMs. Agents can optionally still use explicit proxy mode.
 - **Three-level approvals**: Approvals are checked broadest-first: (1) Global (`skill_id=""`, `source_ip=""`) applies to all agents on all VMs. (2) VM-specific (`skill_id=""`, `source_ip` set) applies to all agents on that VM. (3) Skill-specific (`skill_id` set) gives additional permissions beyond global/VM. Broader approvals cascade to notify narrower waiters.
+- **URL path prefix**: Approvals can optionally restrict access to specific URL path prefixes (e.g., `github.com` with `path_prefix="/olljanat-ai/"` allows only that org's repos). Empty `PathPrefix` means all paths (backward compatible). When multiple approvals match, the most specific (longest PathPrefix) wins. For CONNECT+MITM, any path-specific approval implies host-level tunnel access; per-request path checks enforce restrictions inside the tunnel.
 - **Anonymous access**: Agents can make requests without skill tokens. These go through the global/VM approval system. Invalid tokens are rejected; missing tokens are anonymous.
 - **GUID tokens**: Skill tokens use UUID v4 format (e.g., `a1b2c3d4-e5f6-4789-abcd-ef0123456789`). Skill IDs can be user-provided or auto-generated GUIDs.
 - **State persistence**: All state (skills, approvals, credentials, image approvals) stored in a single `state.json` file, loaded at startup, saved on mutations and shutdown.
@@ -72,7 +73,8 @@ elemental upgrade --reboot --system oci:ghcr.io/olljanat-ai/firewall4ai:<version
 
 ## Common Patterns
 - **Thread safety**: All managers use `sync.RWMutex`. Read operations use `RLock`, write operations use `Lock`.
-- **Approval flow**: `Check(host, skillID, sourceIP)` registers a pending entry, `WaitForDecision()` blocks until admin decides or timeout, `Decide()` notifies all waiters via channels with cascading (global notifies VM/skill waiters).
+- **Approval flow**: `Check(host, skillID, sourceIP, pathPrefix)` registers a pending entry, `WaitForDecision()` blocks until admin decides or timeout, `Decide()` notifies all waiters via channels with cascading (global notifies VM/skill waiters, host-only notifies path-specific waiters and vice versa).
+- **Path matching**: `CheckExistingWithPath(host, path, skillID, sourceIP)` scans approvals using host wildcards and path prefix matching with longest-prefix-wins semantics. `CheckExistingForHost()` checks if any approval exists for a host regardless of path (used for CONNECT+MITM tunnel decisions). `MatchPath(prefix, path)` returns true if the request path starts with the prefix.
 - **Source IP extraction**: `extractSourceIP()` in proxy.go strips the port from `RemoteAddr` to get the VM's IP for approval lookups.
 - **Test helpers**: `setupProxy(t)` creates a test proxy with 50ms approval timeout. `setupProxyWithCA(t)` adds a CA for MITM tests. Registry tests use `setupProxy(t, upstream)` with a mock upstream `httptest.Server`.
 - **Image approval**: Uses a second `approval.Manager` instance. `Host` field holds image references (e.g., `docker.io/library/ubuntu:latest`). `CheckExistingWithMatcher()` enables custom pattern matching via `registry.MatchImageRef()` which supports `docker.io/library/*` and `docker.io/library/ubuntu:*` wildcards.
@@ -82,8 +84,9 @@ elemental upgrade --reboot --system oci:ghcr.io/olljanat-ai/firewall4ai:<version
 ## When Making Changes
 - Run `go test ./...` after changes; all tests should pass
 - The proxy handles three modes: explicit HTTP proxy, explicit CONNECT/MITM, and transparent TLS interception
-- The `checkApproval()` function checks: pre-approved hosts -> global approvals -> VM-specific approvals -> skill-specific approvals -> register pending and wait
-- All approval methods take three identifiers: `host`, `skillID`, `sourceIP`
+- The `checkApproval(host, path, skill, sourceIP)` function checks: pre-approved hosts -> global approvals -> VM-specific approvals -> skill-specific approvals -> register pending and wait. Path-aware matching uses longest-prefix-wins semantics.
+- For CONNECT+MITM, `checkHostApproval()` allows the tunnel if any approval (host-only or path-specific) exists; per-request path checks happen in `handleMITMRequest()`. For blind tunnels (no MITM), only host-level approval is checked.
+- All approval methods take four identifiers: `host`, `skillID`, `sourceIP`, `pathPrefix`. The approval key is `sourceIP|skillID|host|pathPrefix`.
 - The admin UI is vanilla JS with no build step; changes to `web/static/` are embedded at compile time via `go:embed`
 - VM appliance is built as a Debian 13 ISO via Elemental Toolkit (Dockerfile + `elemental build-iso`)
 - System config: iptables rules in `scripts/`, dnsmasq config in `config/dnsmasq/`, network in `config/network/`

@@ -29,7 +29,7 @@ func RegistryForHost(host string, registries []config.RegistryConfig) *config.Re
 // without tags (e.g., "docker.io/library/ubuntu").
 func CheckRepoApproval(mgr *approval.Manager, repo string) bool {
 	// Exact match.
-	if status, ok := mgr.CheckExisting(repo, "", ""); ok && status == approval.StatusApproved {
+	if status, ok := mgr.CheckExisting(repo, "", "", ""); ok && status == approval.StatusApproved {
 		return true
 	}
 	// Wildcard match (e.g., "docker.io/library/*" covers "docker.io/library/ubuntu").

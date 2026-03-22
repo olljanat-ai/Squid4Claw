@@ -49,7 +49,7 @@ func TestCheckRepoApproval(t *testing.T) {
 	}
 
 	// Approve the repo.
-	mgr.Decide("docker.io/library/ubuntu", "", "", approval.StatusApproved, "")
+	mgr.Decide("docker.io/library/ubuntu", "", "", "", approval.StatusApproved, "")
 	if !CheckRepoApproval(mgr, "docker.io/library/ubuntu") {
 		t.Error("expected true after approving repo")
 	}
@@ -60,7 +60,7 @@ func TestCheckRepoApproval(t *testing.T) {
 	}
 
 	// Wildcard approval.
-	mgr.Decide("docker.io/library/*", "", "", approval.StatusApproved, "")
+	mgr.Decide("docker.io/library/*", "", "", "", approval.StatusApproved, "")
 	if !CheckRepoApproval(mgr, "docker.io/library/nginx") {
 		t.Error("expected true after wildcard approval")
 	}

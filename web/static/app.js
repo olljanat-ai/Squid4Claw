@@ -41,6 +41,12 @@ function formatSourceIP(sourceIP) {
   return esc(sourceIP);
 }
 
+// --- Path prefix display helper ---
+function formatPathPrefix(pathPrefix) {
+  if (!pathPrefix) return '<span class="badge-status approved">all paths</span>';
+  return '<code>' + esc(pathPrefix) + '</code>';
+}
+
 // --- Dashboard ---
 async function loadDashboard() {
   try {
@@ -78,19 +84,22 @@ async function loadDashboard() {
       ...(pendingImages || []).map(a => ({ ...a, _type: 'image' })),
     ];
     if (allPending.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No pending approvals</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No pending approvals</td></tr>';
     } else {
       allPending.slice(0, 10).forEach(a => {
         const skillDisplay = formatSkillID(a.skill_id);
         const sourceDisplay = formatSourceIP(a.source_ip);
+        const pathDisplay = a._type === 'host' ? formatPathPrefix(a.path_prefix) : '';
         const apiPath = a._type === 'image' ? '/api/images/decide' : '/api/approvals/decide';
         const typeLabel = a._type === 'image' ? '<span class="badge-status pending">image</span> ' : '';
-        const approveBtn = `<button class="btn btn-success btn-sm" onclick="decideDash('${apiPath}','${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>`;
-        const vmBtn = a.source_ip ? `<button class="btn btn-success btn-sm" onclick="decideDash('${apiPath}','${esc(a.host)}','','${esc(a.source_ip)}','approved')" title="Approve for this VM">Approve VM</button>` : '';
-        const globalBtn = (a.skill_id || a.source_ip) ? `<button class="btn btn-success btn-sm" onclick="decideDash('${apiPath}','${esc(a.host)}','','','approved')" title="Approve for all agents">Approve Global</button>` : '';
-        const denyBtn = `<button class="btn btn-danger btn-sm" onclick="decideDash('${apiPath}','${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>`;
+        const pp = a.path_prefix || '';
+        const approveBtn = `<button class="btn btn-success btn-sm" onclick="decideDash('${apiPath}','${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','approved')">Approve</button>`;
+        const vmBtn = a.source_ip ? `<button class="btn btn-success btn-sm" onclick="decideDash('${apiPath}','${esc(a.host)}','','${esc(a.source_ip)}','${esc(pp)}','approved')" title="Approve for this VM">Approve VM</button>` : '';
+        const globalBtn = (a.skill_id || a.source_ip) ? `<button class="btn btn-success btn-sm" onclick="decideDash('${apiPath}','${esc(a.host)}','','','${esc(pp)}','approved')" title="Approve for all agents">Approve Global</button>` : '';
+        const denyBtn = `<button class="btn btn-danger btn-sm" onclick="decideDash('${apiPath}','${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','denied')">Deny</button>`;
         tbody.innerHTML += `<tr>
           <td>${typeLabel}<strong>${esc(a.host)}</strong></td>
+          <td>${pathDisplay}</td>
           <td>${skillDisplay}</td>
           <td>${sourceDisplay}</td>
           <td>${timeAgo(a.created_at)}</td>
@@ -103,9 +112,9 @@ async function loadDashboard() {
   }
 }
 
-async function decideDash(apiPath, host, skillID, sourceIP, status) {
+async function decideDash(apiPath, host, skillID, sourceIP, pathPrefix, status) {
   try {
-    await api('POST', apiPath, { host, skill_id: skillID, source_ip: sourceIP, status });
+    await api('POST', apiPath, { host, skill_id: skillID, source_ip: sourceIP, path_prefix: pathPrefix, status });
     const activePage = document.querySelector('.page.active');
     if (activePage) {
       const pageId = activePage.id.replace('page-', '');
@@ -131,7 +140,7 @@ async function loadApprovals() {
     const tbody = document.getElementById('approvals-tbody');
     tbody.innerHTML = '';
     if (!approvals || approvals.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No approval records</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No approval records</td></tr>';
       return;
     }
     approvals.sort((a, b) => {
@@ -141,27 +150,30 @@ async function loadApprovals() {
     approvals.forEach(a => {
       const skillDisplay = formatSkillID(a.skill_id);
       const sourceDisplay = formatSourceIP(a.source_ip);
-      const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteApproval('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}')" title="Delete rule">Delete</button>`;
+      const pathDisplay = formatPathPrefix(a.path_prefix);
+      const pp = a.path_prefix || '';
+      const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteApproval('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}')" title="Delete rule">Delete</button>`;
       let actions = '';
       if (a.status === 'pending') {
         const vmBtn = a.source_ip
-          ? `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','','${esc(a.source_ip)}','approved')" title="Approve for this VM">VM</button>` : '';
+          ? `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','','${esc(a.source_ip)}','${esc(pp)}','approved')" title="Approve for this VM">VM</button>` : '';
         const globalBtn = (a.skill_id || a.source_ip)
-          ? `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','','','approved')" title="Approve for all agents">Global</button>` : '';
-        actions = `<button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
+          ? `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','','','${esc(pp)}','approved')" title="Approve for all agents">Global</button>` : '';
+        actions = `<button class="btn btn-success btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','approved')">Approve</button>
            ${vmBtn} ${globalBtn}
-           <button class="btn btn-danger btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
+           <button class="btn btn-danger btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','denied')">Deny</button>
            ${deleteBtn}`;
       } else {
         const promoteBtn = a.source_ip && !a.skill_id
-          ? `<button class="btn btn-outline btn-sm" onclick="promoteToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
-        actions = `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
-           <button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
+          ? `<button class="btn btn-outline btn-sm" onclick="promoteToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${esc(pp)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
+        actions = `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','approved')">Approve</button>
+           <button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','denied')">Deny</button>
            ${promoteBtn}
            ${deleteBtn}`;
       }
       tbody.innerHTML += `<tr>
         <td><strong>${esc(a.host)}</strong></td>
+        <td>${pathDisplay}</td>
         <td>${skillDisplay}</td>
         <td>${sourceDisplay}</td>
         <td><span class="badge-status ${a.status}">${a.status}</span></td>
@@ -174,9 +186,9 @@ async function loadApprovals() {
   }
 }
 
-async function decide(host, skillID, sourceIP, status) {
+async function decide(host, skillID, sourceIP, pathPrefix, status) {
   try {
-    await api('POST', '/api/approvals/decide', { host, skill_id: skillID, source_ip: sourceIP, status });
+    await api('POST', '/api/approvals/decide', { host, skill_id: skillID, source_ip: sourceIP, path_prefix: pathPrefix, status });
     // Refresh current page
     const activePage = document.querySelector('.page.active');
     if (activePage) {
@@ -188,10 +200,10 @@ async function decide(host, skillID, sourceIP, status) {
   }
 }
 
-async function deleteApproval(host, skillID, sourceIP) {
+async function deleteApproval(host, skillID, sourceIP, pathPrefix) {
   if (!confirm(`Delete rule for "${host}"?`)) return;
   try {
-    await api('DELETE', '/api/approvals', { host, skill_id: skillID, source_ip: sourceIP });
+    await api('DELETE', '/api/approvals', { host, skill_id: skillID, source_ip: sourceIP, path_prefix: pathPrefix });
     const activePage = document.querySelector('.page.active');
     if (activePage) {
       const pageId = activePage.id.replace('page-', '');
@@ -202,10 +214,10 @@ async function deleteApproval(host, skillID, sourceIP) {
   }
 }
 
-async function promoteToGlobal(host, sourceIP, status) {
+async function promoteToGlobal(host, sourceIP, pathPrefix, status) {
   if (!confirm(`Promote "${host}" from VM ${sourceIP} to a global rule?`)) return;
   try {
-    await api('POST', '/api/approvals/decide', { host, skill_id: '', source_ip: '', status });
+    await api('POST', '/api/approvals/decide', { host, skill_id: '', source_ip: '', path_prefix: pathPrefix, status });
     const activePage = document.querySelector('.page.active');
     if (activePage) {
       const pageId = activePage.id.replace('page-', '');
@@ -224,6 +236,7 @@ function showAddRule() {
 function hideAddRule() {
   document.getElementById('modal-rule').classList.remove('active');
   document.getElementById('rule-host').value = '';
+  document.getElementById('rule-path-prefix').value = '';
   document.getElementById('rule-level').value = 'global';
   document.getElementById('rule-source-ip').value = '';
   document.getElementById('rule-status').value = 'approved';
@@ -239,6 +252,7 @@ function updateRuleFields() {
 async function addRule() {
   const host = document.getElementById('rule-host').value.trim();
   if (!host) { alert('Host pattern is required'); return; }
+  const pathPrefix = document.getElementById('rule-path-prefix').value.trim();
   const level = document.getElementById('rule-level').value;
   const status = document.getElementById('rule-status').value;
   const note = document.getElementById('rule-note').value.trim();
@@ -248,7 +262,7 @@ async function addRule() {
     if (!sourceIP) { alert('Source IP is required for VM-specific rules'); return; }
   }
   try {
-    await api('POST', '/api/approvals/decide', { host, skill_id: '', source_ip: sourceIP, status, note });
+    await api('POST', '/api/approvals/decide', { host, skill_id: '', source_ip: sourceIP, path_prefix: pathPrefix, status, note });
     hideAddRule();
     loadApprovals();
   } catch (e) {
