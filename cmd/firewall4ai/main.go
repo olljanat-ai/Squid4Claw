@@ -32,9 +32,10 @@ var Version = "dev"
 
 // storeData holds the persisted state.
 type storeData struct {
-	Skills    []auth.Skill             `json:"skills"`
-	Approvals []approval.HostApproval  `json:"approvals"`
-	Creds     []credentials.Credential `json:"credentials"`
+	Skills         []auth.Skill             `json:"skills"`
+	Approvals      []approval.HostApproval  `json:"approvals"`
+	Creds          []credentials.Credential `json:"credentials"`
+	ImageApprovals []approval.HostApproval  `json:"image_approvals"`
 }
 
 func main() {
@@ -69,6 +70,7 @@ func main() {
 	// Initialize components.
 	skills := auth.NewSkillStore()
 	approvals := approval.NewManager()
+	imageApprovals := approval.NewManager()
 	creds := credentials.NewManager()
 	logger := proxylog.NewLogger(cfg.MaxLogEntries)
 
@@ -76,6 +78,7 @@ func main() {
 	state := dataStore.Get()
 	skills.LoadSkills(state.Skills)
 	approvals.LoadApprovals(state.Approvals)
+	imageApprovals.LoadApprovals(state.ImageApprovals)
 	creds.LoadCredentials(state.Creds)
 
 	// Save function persists current state.
@@ -83,13 +86,19 @@ func main() {
 		return dataStore.Update(func(d *storeData) {
 			d.Skills = skills.ListSkills()
 			d.Approvals = approvals.Export()
+			d.ImageApprovals = imageApprovals.Export()
 			d.Creds = creds.List()
 		})
 	}
 
-	// Setup proxy server with CA for MITM.
+	// Setup proxy server with CA for MITM and registry awareness.
 	p := proxy.New(skills, approvals, creds, logger)
 	p.CA = ca
+	p.ImageApprovals = imageApprovals
+	p.Registries = cfg.Registries
+	for _, reg := range cfg.Registries {
+		log.Printf("Container registry %s: intercepting hosts %v", reg.Name, reg.Hosts)
+	}
 	proxyServer := &http.Server{
 		Addr:         cfg.ListenAddr,
 		Handler:      p,
@@ -100,11 +109,12 @@ func main() {
 	// Setup admin API + UI server.
 	adminMux := http.NewServeMux()
 	apiHandler := &api.Handler{
-		Skills:      skills,
-		Approvals:   approvals,
-		Credentials: creds,
-		Logger:      logger,
-		SaveFunc:    saveFunc,
+		Skills:         skills,
+		Approvals:      approvals,
+		ImageApprovals: imageApprovals,
+		Credentials:    creds,
+		Logger:         logger,
+		SaveFunc:       saveFunc,
 	}
 	apiHandler.RegisterRoutes(adminMux)
 

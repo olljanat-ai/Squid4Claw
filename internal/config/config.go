@@ -6,15 +6,24 @@ import (
 	"sync"
 )
 
+// RegistryConfig describes a container registry whose traffic is intercepted
+// by the transparent proxy for image-level approval. Hosts lists all
+// hostnames associated with this registry (registry API, auth, CDN).
+type RegistryConfig struct {
+	Name  string   `json:"name"`  // e.g., "docker.io" — used as prefix for image refs
+	Hosts []string `json:"hosts"` // all hostnames: registry, auth, CDN endpoints
+}
+
 // Config holds the main application configuration.
 type Config struct {
-	ListenAddr         string `json:"listen_addr"`
-	AdminAddr          string `json:"admin_addr"`
-	TransparentTLSAddr string `json:"transparent_tls_addr"`
-	DataDir            string `json:"data_dir"`
-	TLSCertFile        string `json:"tls_cert_file"`
-	TLSKeyFile         string `json:"tls_key_file"`
-	MaxLogEntries      int    `json:"max_log_entries"`
+	ListenAddr         string           `json:"listen_addr"`
+	AdminAddr          string           `json:"admin_addr"`
+	TransparentTLSAddr string           `json:"transparent_tls_addr"`
+	DataDir            string           `json:"data_dir"`
+	TLSCertFile        string           `json:"tls_cert_file"`
+	TLSKeyFile         string           `json:"tls_key_file"`
+	MaxLogEntries      int              `json:"max_log_entries"`
+	Registries         []RegistryConfig `json:"registries"`
 }
 
 var (

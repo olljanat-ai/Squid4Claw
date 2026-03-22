@@ -18,6 +18,7 @@ Agents need **no proxy configuration** - all HTTP/HTTPS traffic is intercepted t
 - **Pre-approved hosts** - Configure allowed hosts per skill to skip manual approval
 - **Credential injection** - Inject API keys, bearer tokens, basic auth, or query parameters into requests on behalf of agents
 - **Admin UI** - Modern web interface (always HTTPS) for managing approvals, skills, credentials, and viewing logs
+- **Container registry control** - Transparently intercepts Docker/container image pulls with per-image approval (no Docker mirror configuration needed)
 - **Real-time logging** - All proxy requests (including decrypted HTTPS) are logged and visible in the admin UI
 
 ## Network Architecture
@@ -40,6 +41,7 @@ Agents need **no proxy configuration** - all HTTP/HTTPS traffic is intercepted t
                     |  |  Proxy HTTP     :8080            |  |
                     |  |  Transparent TLS:8443            |  |
                     |  |  Admin UI       :443 (HTTPS)     |  |
+                    |  |  + registry image-level approval  |  |
                     |  +----------------------------------+  |
                     |                                        |
                     |  +----------------------------------+  |
@@ -148,7 +150,11 @@ Create a `config.json` file (all fields optional):
   "data_dir": "./data",
   "tls_cert_file": "",
   "tls_key_file": "",
-  "max_log_entries": 10000
+  "max_log_entries": 10000,
+  "registries": [
+    {"name": "docker.io", "hosts": ["registry-1.docker.io", "auth.docker.io", "production.cloudflare.docker.com"]},
+    {"name": "ghcr.io", "hosts": ["ghcr.io"]}
+  ]
 }
 ```
 
@@ -161,6 +167,7 @@ Create a `config.json` file (all fields optional):
 | `tls_cert_file` | (empty) | Custom TLS certificate for admin server (auto-generated if empty) |
 | `tls_key_file` | (empty) | Custom TLS key for admin server (auto-generated if empty) |
 | `max_log_entries` | `10000` | Maximum log entries kept in memory |
+| `registries` | `[]` | Container registries for image-level approval (each with `name` and `hosts` list) |
 
 ## Trusting the CA Certificate
 For TLS MITM inspection to work, the AI agent's environment must trust the Firewall4AI CA. The CA certificate is at `<data_dir>/ca.crt`.
@@ -247,6 +254,35 @@ Configure credentials in the admin UI to automatically inject authentication int
 
 Credentials can be scoped to specific hosts (with wildcard support like `*.example.com`) and specific skills.
 
+### Container Registry Control
+Firewall4AI transparently intercepts container image pulls via the same TLS MITM proxy used for web traffic. **No Docker or containerd mirror configuration is needed on agent VMs** — image pulls are intercepted automatically, just like any other HTTPS traffic.
+
+When registries are configured in `config.json`, the proxy recognizes traffic to those registry hosts and applies image-level approval instead of host-level approval. All associated hosts (registry API, auth endpoints, CDN) are auto-approved at the host level — the real access control happens per-image.
+
+#### Image Approval Flow
+When an agent pulls an image (e.g., `docker pull ubuntu:latest`):
+1. Docker connects to `registry-1.docker.io` — transparently intercepted by iptables
+2. The proxy detects this is a configured registry host and parses the image reference (`docker.io/library/ubuntu:latest`)
+3. If no approval exists, a pending entry appears in the admin UI **Images** tab
+4. Admin approves or denies the image pull
+5. Wildcard patterns are supported for pre-approving images:
+   - `docker.io/library/*` — all official Docker Hub images
+   - `docker.io/library/ubuntu:*` — any tag of ubuntu
+   - `ghcr.io/myorg/*` — all images from a GitHub organization
+
+Image approvals use the same three-level system as host approvals (global, VM-specific, skill-specific).
+
+#### Registry Configuration
+The `registries` config lists all hostnames associated with each registry (API, auth, CDN):
+```json
+{
+  "registries": [
+    {"name": "docker.io", "hosts": ["registry-1.docker.io", "auth.docker.io", "production.cloudflare.docker.com"]},
+    {"name": "ghcr.io", "hosts": ["ghcr.io"]}
+  ]
+}
+```
+
 ### Explicit Proxy Mode (Backward Compatible)
 Agents can still be configured to use the proxy explicitly if preferred:
 ```bash
@@ -271,6 +307,14 @@ Both transparent and explicit proxy modes work simultaneously.
 | `GET` | `/api/approvals` | List all approvals |
 | `GET` | `/api/approvals/pending` | List pending approvals |
 | `POST` | `/api/approvals/decide` | Approve or deny a host (empty `skill_id` + empty `source_ip` = global, empty `skill_id` + `source_ip` = VM-specific) |
+
+### Image Approvals (Container Registry)
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/images` | List all image approvals |
+| `GET` | `/api/images/pending` | List pending image approvals |
+| `POST` | `/api/images/decide` | Approve or deny an image (same level semantics as host approvals) |
+| `DELETE` | `/api/images` | Delete an image approval rule |
 
 ### Credentials
 | Method | Path | Description |

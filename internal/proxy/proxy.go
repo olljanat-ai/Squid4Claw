@@ -15,8 +15,10 @@ import (
 	"github.com/olljanat-ai/firewall4ai/internal/approval"
 	"github.com/olljanat-ai/firewall4ai/internal/auth"
 	"github.com/olljanat-ai/firewall4ai/internal/certgen"
+	"github.com/olljanat-ai/firewall4ai/internal/config"
 	"github.com/olljanat-ai/firewall4ai/internal/credentials"
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
+	"github.com/olljanat-ai/firewall4ai/internal/registry"
 )
 
 const (
@@ -29,6 +31,8 @@ const (
 type Proxy struct {
 	Skills          *auth.SkillStore
 	Approvals       *approval.Manager
+	ImageApprovals  *approval.Manager // image-level approvals for container registries
+	Registries      []config.RegistryConfig
 	Credentials     *credentials.Manager
 	Logger          *proxylog.Logger
 	Transport       http.RoundTripper
@@ -151,6 +155,36 @@ func (p *Proxy) checkApproval(host string, skill *auth.Skill, sourceIP string) a
 		status = p.Approvals.WaitForDecision(host, sid, pendingIP, p.ApprovalTimeout)
 	}
 	return status
+}
+
+// checkImageApproval performs three-level image approval for registry manifests.
+func (p *Proxy) checkImageApproval(imageRef string, skill *auth.Skill, sourceIP string) approval.Status {
+	sid := getSkillID(skill)
+
+	// 1. Global.
+	if status, ok := p.ImageApprovals.CheckExistingWithMatcher(imageRef, "", "", registry.MatchImageRef); ok && status != approval.StatusPending {
+		return status
+	}
+	// 2. VM-specific.
+	if sourceIP != "" {
+		if status, ok := p.ImageApprovals.CheckExistingWithMatcher(imageRef, "", sourceIP, registry.MatchImageRef); ok && status != approval.StatusPending {
+			return status
+		}
+	}
+	// 3. Skill-specific.
+	if sid != "" {
+		if status, ok := p.ImageApprovals.CheckExistingWithMatcher(imageRef, sid, "", registry.MatchImageRef); ok && status != approval.StatusPending {
+			return status
+		}
+	}
+
+	// Register pending at the most specific level and wait.
+	pendingIP := sourceIP
+	if sid != "" {
+		pendingIP = ""
+	}
+	p.ImageApprovals.Check(imageRef, sid, pendingIP)
+	return p.ImageApprovals.WaitForDecision(imageRef, sid, pendingIP, p.ApprovalTimeout)
 }
 
 func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
@@ -378,6 +412,12 @@ func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, 
 	// Remove proxy auth header if client re-sent it inside the tunnel.
 	req.Header.Del(AuthHeader)
 
+	// Check if this is a container registry request.
+	if reg := registry.RegistryForHost(host, p.Registries); reg != nil {
+		p.handleRegistryTLSRequest(clientConn, req, host, sourceIP, skill, reg, start)
+		return
+	}
+
 	// Set the URL for forwarding.
 	req.URL.Scheme = "https"
 	req.URL.Host = targetAddr
@@ -557,6 +597,12 @@ func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Reque
 	sid := getSkillID(skill)
 	req.Header.Del(AuthHeader)
 
+	// Check if this is a container registry request.
+	if reg := registry.RegistryForHost(host, p.Registries); reg != nil {
+		p.handleRegistryTLSRequest(clientConn, req, host, sourceIP, skill, reg, start)
+		return
+	}
+
 	status := p.checkApproval(host, skill, sourceIP)
 	if status != approval.StatusApproved {
 		p.Logger.Add(proxylog.Entry{
@@ -616,6 +662,113 @@ func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Reque
 		Detail:   fmt.Sprintf("%d %s", resp.StatusCode, resp.Status),
 		Duration: time.Since(start).Milliseconds(),
 	})
+
+	resp.Write(clientConn)
+}
+
+// handleRegistryTLSRequest handles a request to a known container registry host.
+// Manifest requests trigger image-level approval; blob requests use repo-level
+// approval; all other registry traffic (auth, /v2/ pings) is auto-approved.
+func (p *Proxy) handleRegistryTLSRequest(clientConn net.Conn, req *http.Request, host, sourceIP string, skill *auth.Skill, reg *config.RegistryConfig, start time.Time) {
+	sid := getSkillID(skill)
+	urlPath := req.URL.Path
+
+	name, _, pathType, isV2 := registry.ParsePath(urlPath)
+
+	if isV2 && (pathType == "manifests" || pathType == "blobs") {
+		// Manifest and blob requests use repo-level approval.
+		// Approving a repo allows all tags, digests, and layers.
+		repo := registry.ParseImageRepo(reg.Name, name)
+		if !registry.CheckRepoApproval(p.ImageApprovals, repo) {
+			if pathType == "blobs" {
+				// Blobs don't create pending entries; they are only
+				// allowed if the repo was already approved via a manifest.
+				p.Logger.Add(proxylog.Entry{
+					SkillID: sid,
+					Method:  req.Method,
+					Host:    host,
+					Path:    urlPath,
+					Status:  "denied",
+					Detail:  "repository not approved: " + repo,
+				})
+				resp := &http.Response{
+					StatusCode: http.StatusForbidden,
+					ProtoMajor: 1,
+					ProtoMinor: 1,
+					Header:     make(http.Header),
+				}
+				resp.Write(clientConn)
+				return
+			}
+			// Manifest: register pending and wait for admin decision.
+			status := p.checkImageApproval(repo, skill, sourceIP)
+			if status != approval.StatusApproved {
+				p.Logger.Add(proxylog.Entry{
+					SkillID: sid,
+					Method:  req.Method,
+					Host:    host,
+					Path:    urlPath,
+					Status:  string(status),
+					Detail:  "image not approved: " + repo,
+				})
+				resp := &http.Response{
+					StatusCode: http.StatusForbidden,
+					ProtoMajor: 1,
+					ProtoMinor: 1,
+					Header:     make(http.Header),
+				}
+				resp.Write(clientConn)
+				return
+			}
+		}
+		p.Logger.Add(proxylog.Entry{
+			SkillID:  sid,
+			Method:   req.Method,
+			Host:     host,
+			Path:     urlPath,
+			Status:   "allowed",
+			Detail:   repo,
+			Duration: time.Since(start).Milliseconds(),
+		})
+	} else {
+		// Other registry traffic (auth, /v2/ ping, etc.): auto-approve.
+		p.Logger.Add(proxylog.Entry{
+			SkillID:  sid,
+			Method:   req.Method,
+			Host:     host,
+			Path:     urlPath,
+			Status:   "allowed",
+			Detail:   "registry infra",
+			Duration: time.Since(start).Milliseconds(),
+		})
+	}
+
+	// Forward to the real backend.
+	req.URL.Scheme = "https"
+	req.URL.Host = host + ":443"
+	req.RequestURI = ""
+
+	resp, err := p.Transport.RoundTrip(req)
+	if err != nil {
+		p.Logger.Add(proxylog.Entry{
+			SkillID:  sid,
+			Method:   req.Method,
+			Host:     host,
+			Path:     urlPath,
+			Status:   "error",
+			Detail:   err.Error(),
+			Duration: time.Since(start).Milliseconds(),
+		})
+		resp502 := &http.Response{
+			StatusCode: http.StatusBadGateway,
+			ProtoMajor: 1,
+			ProtoMinor: 1,
+			Header:     make(http.Header),
+		}
+		resp502.Write(clientConn)
+		return
+	}
+	defer resp.Body.Close()
 
 	resp.Write(clientConn)
 }

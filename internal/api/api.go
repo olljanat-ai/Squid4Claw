@@ -16,11 +16,12 @@ import (
 
 // Handler holds dependencies for API endpoints.
 type Handler struct {
-	Skills      *auth.SkillStore
-	Approvals   *approval.Manager
-	Credentials *credentials.Manager
-	Logger      *proxylog.Logger
-	SaveFunc    func() error // called after state mutations to persist
+	Skills         *auth.SkillStore
+	Approvals      *approval.Manager
+	ImageApprovals *approval.Manager // image-level approvals for container registry
+	Credentials    *credentials.Manager
+	Logger         *proxylog.Logger
+	SaveFunc       func() error // called after state mutations to persist
 }
 
 // RegisterRoutes sets up all API routes on the given mux.
@@ -42,6 +43,12 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/credentials", h.createCredential)
 	mux.HandleFunc("PUT /api/credentials", h.updateCredential)
 	mux.HandleFunc("DELETE /api/credentials", h.deleteCredential)
+
+	// Image Approvals (container registry)
+	mux.HandleFunc("GET /api/images", h.listImageApprovals)
+	mux.HandleFunc("GET /api/images/pending", h.listPendingImages)
+	mux.HandleFunc("POST /api/images/decide", h.decideImageApproval)
+	mux.HandleFunc("DELETE /api/images", h.deleteImageApproval)
 
 	// Logs
 	mux.HandleFunc("GET /api/logs", h.getLogs)
@@ -244,6 +251,46 @@ func (h *Handler) deleteCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Credentials.Delete(id)
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
+}
+
+// --- Image Approvals ---
+
+func (h *Handler) listImageApprovals(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, h.ImageApprovals.ListAll())
+}
+
+func (h *Handler) listPendingImages(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, h.ImageApprovals.ListPending())
+}
+
+func (h *Handler) decideImageApproval(w http.ResponseWriter, r *http.Request) {
+	var req decisionRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Status != approval.StatusApproved && req.Status != approval.StatusDenied {
+		http.Error(w, "status must be 'approved' or 'denied'", http.StatusBadRequest)
+		return
+	}
+	h.ImageApprovals.Decide(req.Host, req.SkillID, req.SourceIP, req.Status, req.Note)
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
+}
+
+func (h *Handler) deleteImageApproval(w http.ResponseWriter, r *http.Request) {
+	var req deleteApprovalRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Host == "" {
+		http.Error(w, "host is required", http.StatusBadRequest)
+		return
+	}
+	h.ImageApprovals.Delete(req.Host, req.SkillID, req.SourceIP)
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
