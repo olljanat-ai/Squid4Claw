@@ -107,16 +107,9 @@ Agent VM                      Firewall4AI VM                   Internet
 | NAT | eth1 :443 | REDIRECT :8443 | Transparent HTTPS |
 
 ## Quick Start
-Download a pre-built VM image from the [Releases](../../releases) page:
+Download a ISO file from the [Releases](../../releases) page.
 
-| Format | Platform |
-|--------|----------|
-| `firewall4ai-*.qcow2` | QEMU/KVM, Proxmox |
-| `firewall4ai-*.vmdk` | VMware ESXi/Workstation |
-| `firewall4ai-*.vhdx` | Hyper-V |
-
-The VM is a minimal Alpine Linux appliance that runs Firewall4AI as the main service with two network interfaces:
-
+The VM is a minimal Debian appliance that runs Firewall4AI as the main service with two network interfaces:
 | Interface | Configuration | Purpose |
 |-----------|--------------|---------|
 | `eth0` | DHCP client | External/uplink to the internet |
