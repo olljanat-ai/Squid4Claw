@@ -5,7 +5,7 @@
   "data_dir": "/var/lib/firewall4ai",
   "max_log_entries": 10000,
   "registries": [
-    {"name": "docker.io", "upstream": "https://registry-1.docker.io", "port": 5000},
-    {"name": "ghcr.io", "upstream": "https://ghcr.io", "port": 5001}
+    {"name": "docker.io", "hosts": ["registry-1.docker.io", "auth.docker.io", "production.cloudflare.docker.com"]},
+    {"name": "ghcr.io", "hosts": ["ghcr.io"]}
   ]
 }

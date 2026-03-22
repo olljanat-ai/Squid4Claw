@@ -64,9 +64,6 @@ iptables -A INPUT -i $INTERNAL_IF -s $INTERNAL_NET -p tcp --dport $PROXY_PORT -j
 # Allow transparent TLS connections (redirected from port 443)
 iptables -A INPUT -i $INTERNAL_IF -s $INTERNAL_NET -p tcp --dport $TRANSPARENT_TLS_PORT -j ACCEPT
 
-# Allow container registry mirror ports (5000-5099)
-iptables -A INPUT -i $INTERNAL_IF -s $INTERNAL_NET -p tcp --dport 5000:5099 -j ACCEPT
-
 # Allow ICMP (ping) from internal network for diagnostics
 iptables -A INPUT -i $INTERNAL_IF -p icmp -j ACCEPT
 

@@ -6,11 +6,12 @@ import (
 	"sync"
 )
 
-// RegistryConfig describes one upstream container registry to mirror.
+// RegistryConfig describes a container registry whose traffic is intercepted
+// by the transparent proxy for image-level approval. Hosts lists all
+// hostnames associated with this registry (registry API, auth, CDN).
 type RegistryConfig struct {
-	Name     string `json:"name"`     // e.g., "docker.io"
-	Upstream string `json:"upstream"` // e.g., "https://registry-1.docker.io"
-	Port     int    `json:"port"`     // e.g., 5000
+	Name  string   `json:"name"`  // e.g., "docker.io" — used as prefix for image refs
+	Hosts []string `json:"hosts"` // all hostnames: registry, auth, CDN endpoints
 }
 
 // Config holds the main application configuration.

@@ -23,7 +23,6 @@ import (
 	"github.com/olljanat-ai/firewall4ai/internal/credentials"
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 	"github.com/olljanat-ai/firewall4ai/internal/proxy"
-	"github.com/olljanat-ai/firewall4ai/internal/registry"
 	"github.com/olljanat-ai/firewall4ai/internal/store"
 	"github.com/olljanat-ai/firewall4ai/web"
 )
@@ -92,9 +91,14 @@ func main() {
 		})
 	}
 
-	// Setup proxy server with CA for MITM.
+	// Setup proxy server with CA for MITM and registry awareness.
 	p := proxy.New(skills, approvals, creds, logger)
 	p.CA = ca
+	p.ImageApprovals = imageApprovals
+	p.Registries = cfg.Registries
+	for _, reg := range cfg.Registries {
+		log.Printf("Container registry %s: intercepting hosts %v", reg.Name, reg.Hosts)
+	}
 	proxyServer := &http.Server{
 		Addr:         cfg.ListenAddr,
 		Handler:      p,
@@ -169,30 +173,6 @@ func main() {
 		}
 	}()
 
-	// Start container registry mirror servers.
-	var registryServers []*http.Server
-	for _, regCfg := range cfg.Registries {
-		regProxy := registry.New(regCfg, imageApprovals, skills, logger)
-
-		regTLSConfig := ca.TLSConfigForMITM()
-		regTLSConfig.MinVersion = tls.VersionTLS12
-
-		regServer := &http.Server{
-			Addr:         fmt.Sprintf(":%d", regCfg.Port),
-			Handler:      regProxy,
-			TLSConfig:    regTLSConfig,
-			ReadTimeout:  30 * time.Second,
-			WriteTimeout: 10 * time.Minute,
-		}
-		registryServers = append(registryServers, regServer)
-		go func(rs *http.Server, name string, port int) {
-			log.Printf("Registry mirror for %s listening on :%d", name, port)
-			if err := rs.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("Registry mirror %s error: %v", name, err)
-			}
-		}(regServer, regCfg.Name, regCfg.Port)
-	}
-
 	// Graceful shutdown.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -210,9 +190,6 @@ func main() {
 	transparentListener.Close()
 	proxyServer.Shutdown(ctx)
 	adminServer.Shutdown(ctx)
-	for _, rs := range registryServers {
-		rs.Shutdown(ctx)
-	}
 	log.Println("Stopped.")
 }
 

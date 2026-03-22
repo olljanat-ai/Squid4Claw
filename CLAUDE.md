@@ -5,12 +5,12 @@ Firewall4AI is a transparent firewall/proxy that controls AI agent internet acce
 
 ## Architecture
 - **Single Go binary**, zero external dependencies (stdlib only)
-- **Three listeners + registry mirrors**: HTTP proxy (:8080), transparent TLS (:8443), admin UI (:443), registry mirrors (:5000+)
+- **Three listeners**: HTTP proxy (:8080), transparent TLS (:8443), admin UI (:443)
 - **iptables REDIRECT**: Port 80 -> :8080, port 443 -> :8443 for transparent interception
 - **TLS MITM**: Auto-generated CA signs per-host certificates; agents must trust the CA
 - **Default-deny**: All connections blocked until admin approves
 - **Three-level approval**: Global (all agents/VMs) -> VM-specific (by source IP) -> Skill-specific (by skill token, for getting more permissions). Used for both host approvals and image approvals.
-- **Container registry mirror**: Docker Registry V2 pull-through proxy with per-image approval. Separate port per upstream registry (docker.io:5000, ghcr.io:5001). Handles upstream Bearer token auth and CDN redirect following.
+- **Container registry awareness**: Transparent proxy detects Docker Registry V2 traffic to configured registry hosts and applies per-image approval instead of per-host approval. No Docker mirror config needed on agent VMs.
 - **VM appliance**: Debian 13 ISO built with Elemental Toolkit, two NICs (eth0=internet, eth1=agent network 10.255.255.0/24)
 - **Immutable OS**: Elemental Toolkit provides immutable rootfs with btrfs snapshots and OTA upgrades via container images
 - **Persistent storage**: Rules (state.json), CA certificates, DHCP leases, and logs stored on COS_PERSISTENT partition
@@ -28,7 +28,7 @@ internal/
   credentials/       - Credential injection (header/bearer/basic_auth/query_param)
   logging/           - In-memory circular buffer request logger
   proxy/             - HTTP/HTTPS proxy with transparent + explicit modes
-  registry/          - Docker Registry V2 pull-through proxy with image approval
+  registry/          - Docker Registry V2 utilities (path parsing, image ref matching)
   store/             - Generic JSON file persistence
 web/static/          - Admin UI (vanilla HTML/JS/CSS, embedded at build time)
 Dockerfile           - Multi-stage build: elemental CLI + firewall4ai binary + Debian 13 OS image
@@ -68,15 +68,15 @@ elemental upgrade --reboot --system oci:ghcr.io/olljanat-ai/firewall4ai:<version
 - **Anonymous access**: Agents can make requests without skill tokens. These go through the global/VM approval system. Invalid tokens are rejected; missing tokens are anonymous.
 - **GUID tokens**: Skill tokens use UUID v4 format (e.g., `a1b2c3d4-e5f6-4789-abcd-ef0123456789`). Skill IDs can be user-provided or auto-generated GUIDs.
 - **State persistence**: All state (skills, approvals, credentials, image approvals) stored in a single `state.json` file, loaded at startup, saved on mutations and shutdown.
-- **Registry mirror**: Each configured upstream registry gets a separate HTTPS listener. Manifest requests (`/v2/{name}/manifests/{ref}`) trigger image-level approval. Blob requests are allowed at repo level once any image in that repo is approved. Upstream auth uses Bearer token flow with caching. CDN redirects are followed by the proxy since agent VMs cannot reach external hosts.
+- **Registry integration**: Configured registry hosts are detected in the transparent proxy. Manifest requests (`/v2/{name}/manifests/{ref}`) trigger image-level approval. Blob requests are allowed at repo level once any image in that repo is approved. All other registry traffic (auth endpoints, /v2/ pings, CDN) is auto-approved since the registry is configured explicitly.
 
 ## Common Patterns
 - **Thread safety**: All managers use `sync.RWMutex`. Read operations use `RLock`, write operations use `Lock`.
 - **Approval flow**: `Check(host, skillID, sourceIP)` registers a pending entry, `WaitForDecision()` blocks until admin decides or timeout, `Decide()` notifies all waiters via channels with cascading (global notifies VM/skill waiters).
 - **Source IP extraction**: `extractSourceIP()` in proxy.go strips the port from `RemoteAddr` to get the VM's IP for approval lookups.
 - **Test helpers**: `setupProxy(t)` creates a test proxy with 50ms approval timeout. `setupProxyWithCA(t)` adds a CA for MITM tests. Registry tests use `setupProxy(t, upstream)` with a mock upstream `httptest.Server`.
-- **Image approval**: Uses a second `approval.Manager` instance. `Host` field holds image references (e.g., `docker.io/library/ubuntu:latest`). `CheckExistingWithMatcher()` enables custom pattern matching via `MatchImageRef()` which supports `docker.io/library/*` and `docker.io/library/ubuntu:*` wildcards.
-- **Registry proxy**: `parsePath()` extracts name+reference from V2 API URLs. `proxyUpstream()` handles 401→Bearer token→retry and follows 3xx redirects. Streams large blobs via `io.Copy` with `http.Flusher`.
+- **Image approval**: Uses a second `approval.Manager` instance. `Host` field holds image references (e.g., `docker.io/library/ubuntu:latest`). `CheckExistingWithMatcher()` enables custom pattern matching via `registry.MatchImageRef()` which supports `docker.io/library/*` and `docker.io/library/ubuntu:*` wildcards.
+- **Registry utilities**: `registry.ParsePath()` extracts name+reference from V2 API URLs. `registry.RegistryForHost()` looks up the registry config for a hostname. `registry.ParseImageRef()` constructs full image references. These are used by `handleRegistryTLSRequest()` in the proxy.
 - **No external dependencies**: Everything uses Go stdlib. Don't add third-party packages.
 
 ## When Making Changes
@@ -89,7 +89,8 @@ elemental upgrade --reboot --system oci:ghcr.io/olljanat-ai/firewall4ai:<version
 - System config: iptables rules in `scripts/`, dnsmasq config in `config/dnsmasq/`, network in `config/network/`
 - Persistent data (state.json, CA certs, logs, DHCP leases) survives reboots/upgrades via COS_PERSISTENT partition
 - OTA upgrades via `elemental upgrade --system oci:<image>` using the pushed container image from GHCR
-- The registry proxy (`internal/registry/`) uses a separate `approval.Manager` instance for image approvals, persisted as `image_approvals` in state.json
+- The transparent proxy detects registry hosts via `registry.RegistryForHost()` and routes to `handleRegistryTLSRequest()` for image-level approval instead of host-level
+- Image approvals use a second `approval.Manager` instance, persisted as `image_approvals` in state.json
 - Image approvals follow the same three-level pattern as host approvals; the `Host` field contains the image reference (e.g., `docker.io/library/ubuntu:latest`)
-- Registry config is in `config.json` under `registries` array; each entry has `name`, `upstream`, and `port`
-- Registry mirror ports (5000-5099) are allowed in iptables from the agent network
+- Registry config is in `config.json` under `registries` array; each entry has `name` and `hosts` (all associated hostnames: registry API, auth, CDN)
+- All configured registry hosts are auto-approved for network access; the real access control is per-image
