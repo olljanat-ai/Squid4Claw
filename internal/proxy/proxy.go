@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	approvalTimeout = 5 * time.Minute
+	approvalTimeout = 15 * time.Minute
 	// AuthHeader is used by AI agents to provide their skill token.
 	AuthHeader = "X-Firewall4AI-Token"
 	// maxFullLogBody is the maximum body size captured in full logging mode.

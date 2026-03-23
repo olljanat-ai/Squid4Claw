@@ -116,8 +116,8 @@ func main() {
 	proxyServer := &http.Server{
 		Addr:         cfg.ListenAddr,
 		Handler:      p,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
+		ReadTimeout:  10 * time.Minute,
+		WriteTimeout: 10 * time.Minute,
 	}
 
 	// Setup admin API + UI server.
