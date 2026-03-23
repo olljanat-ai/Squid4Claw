@@ -20,6 +20,7 @@ import (
 	"github.com/olljanat-ai/firewall4ai/internal/certgen"
 	"github.com/olljanat-ai/firewall4ai/internal/config"
 	"github.com/olljanat-ai/firewall4ai/internal/credentials"
+	"github.com/olljanat-ai/firewall4ai/internal/library"
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 	"github.com/olljanat-ai/firewall4ai/internal/registry"
 )
@@ -34,15 +35,19 @@ const (
 
 // Proxy is the main proxy server.
 type Proxy struct {
-	Skills          *auth.SkillStore
-	Approvals       *approval.Manager
-	ImageApprovals  *approval.Manager // image-level approvals for container registries
-	Registries      []config.RegistryConfig
-	Credentials     *credentials.Manager
-	Logger          *proxylog.Logger
-	Transport       http.RoundTripper
-	CA              *certgen.CA
-	ApprovalTimeout time.Duration
+	Skills           *auth.SkillStore
+	Approvals        *approval.Manager
+	ImageApprovals   *approval.Manager // image-level approvals for container registries
+	PackageApprovals *approval.Manager // OS package approvals (e.g., Debian)
+	LibraryApprovals *approval.Manager // code library approvals (e.g., Go, npm, PyPI, NuGet)
+	Registries       []config.RegistryConfig
+	OSPackages       []config.PackageRepoConfig
+	CodeLibraries    []config.PackageRepoConfig
+	Credentials      *credentials.Manager
+	Logger           *proxylog.Logger
+	Transport        http.RoundTripper
+	CA               *certgen.CA
+	ApprovalTimeout  time.Duration
 }
 
 // New creates a new Proxy with the given dependencies.
@@ -558,6 +563,16 @@ func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, 
 		return
 	}
 
+	// Check if this is a package repository request.
+	if repo := library.RepoForHost(host, p.OSPackages); repo != nil {
+		p.handlePackageRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, true, start)
+		return
+	}
+	if repo := library.RepoForHost(host, p.CodeLibraries); repo != nil {
+		p.handlePackageRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, false, start)
+		return
+	}
+
 	// Check path-level approval for this specific request.
 	status := p.checkApproval(host, req.URL.Path, skill, sourceIP)
 	if status != approval.StatusApproved {
@@ -785,6 +800,16 @@ func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Reque
 		return
 	}
 
+	// Check if this is a package repository request.
+	if repo := library.RepoForHost(host, p.OSPackages); repo != nil {
+		p.handlePackageRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, true, start)
+		return
+	}
+	if repo := library.RepoForHost(host, p.CodeLibraries); repo != nil {
+		p.handlePackageRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, false, start)
+		return
+	}
+
 	status := p.checkApproval(host, req.URL.Path, skill, sourceIP)
 	if status != approval.StatusApproved {
 		p.Logger.Add(proxylog.Entry{
@@ -974,6 +999,159 @@ func (p *Proxy) handleRegistryTLSRequest(clientConn net.Conn, req *http.Request,
 	defer resp.Body.Close()
 
 	resp.Write(clientConn)
+}
+
+// handlePackageRepoTLSRequest handles a request to a known package repository host.
+// Package-specific requests trigger package-level approval; metadata requests are
+// auto-approved since the repo host is configured explicitly.
+func (p *Proxy) handlePackageRepoTLSRequest(clientConn net.Conn, req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, isOSPkg bool, start time.Time) {
+	sid := getSkillID(skill)
+	urlPath := req.URL.Path
+	repoType := library.PackageType(repo.Type)
+
+	pkgName, ok := library.ParsePackageName(urlPath, repoType)
+	if !ok {
+		// Unrecognized path — auto-approve as repo infra.
+		p.Logger.Add(proxylog.Entry{
+			SkillID:  sid,
+			Method:   req.Method,
+			Host:     host,
+			Path:     urlPath,
+			Status:   "allowed",
+			Detail:   "package repo infra (" + repo.Name + ")",
+			Duration: time.Since(start).Milliseconds(),
+		})
+	} else if pkgName == "" {
+		// Metadata request (index, dist, etc.) — auto-approve.
+		p.Logger.Add(proxylog.Entry{
+			SkillID:  sid,
+			Method:   req.Method,
+			Host:     host,
+			Path:     urlPath,
+			Status:   "allowed",
+			Detail:   "package metadata (" + repo.Name + ")",
+			Duration: time.Since(start).Milliseconds(),
+		})
+	} else {
+		// Package-specific request — check approval.
+		mgr := p.LibraryApprovals
+		if isOSPkg {
+			mgr = p.PackageApprovals
+		}
+
+		if !library.CheckPackageApproval(mgr, pkgName) {
+			status := p.checkLibraryApproval(mgr, pkgName, repoType, skill, sourceIP)
+			if status != approval.StatusApproved {
+				p.Logger.Add(proxylog.Entry{
+					SkillID: sid,
+					Method:  req.Method,
+					Host:    host,
+					Path:    urlPath,
+					Status:  string(status),
+					Detail:  "package not approved: " + string(repoType) + ":" + pkgName,
+				})
+				resp := &http.Response{
+					StatusCode: http.StatusForbidden,
+					ProtoMajor: 1,
+					ProtoMinor: 1,
+					Header:     make(http.Header),
+				}
+				resp.Write(clientConn)
+				return
+			}
+		}
+		p.Logger.Add(proxylog.Entry{
+			SkillID:  sid,
+			Method:   req.Method,
+			Host:     host,
+			Path:     urlPath,
+			Status:   "allowed",
+			Detail:   string(repoType) + ":" + pkgName,
+			Duration: time.Since(start).Milliseconds(),
+		})
+	}
+
+	// Forward to the real backend.
+	req.URL.Scheme = "https"
+	req.URL.Host = host + ":443"
+	req.RequestURI = ""
+
+	resp, err := p.Transport.RoundTrip(req)
+	if err != nil {
+		p.Logger.Add(proxylog.Entry{
+			SkillID:  sid,
+			Method:   req.Method,
+			Host:     host,
+			Path:     urlPath,
+			Status:   "error",
+			Detail:   err.Error(),
+			Duration: time.Since(start).Milliseconds(),
+		})
+		resp502 := &http.Response{
+			StatusCode: http.StatusBadGateway,
+			ProtoMajor: 1,
+			ProtoMinor: 1,
+			Header:     make(http.Header),
+		}
+		resp502.Write(clientConn)
+		return
+	}
+	defer resp.Body.Close()
+
+	resp.Write(clientConn)
+}
+
+// checkLibraryApproval performs three-level approval for a package/library.
+// The Host field in the approval contains "type:packageName" (e.g., "golang:github.com/gorilla/mux").
+func (p *Proxy) checkLibraryApproval(mgr *approval.Manager, pkgName string, repoType library.PackageType, skill *auth.Skill, sourceIP string) approval.Status {
+	ref := string(repoType) + ":" + pkgName
+	sid := getSkillID(skill)
+
+	// 1. Global.
+	if status, ok := mgr.CheckExistingWithMatcher(ref, "", "", matchLibraryRef); ok && status != approval.StatusPending {
+		return status
+	}
+	// 2. VM-specific.
+	if sourceIP != "" {
+		if status, ok := mgr.CheckExistingWithMatcher(ref, "", sourceIP, matchLibraryRef); ok && status != approval.StatusPending {
+			return status
+		}
+	}
+	// 3. Skill-specific.
+	if sid != "" {
+		if status, ok := mgr.CheckExistingWithMatcher(ref, sid, "", matchLibraryRef); ok && status != approval.StatusPending {
+			return status
+		}
+	}
+
+	// Register pending at the most specific level and wait.
+	pendingIP := sourceIP
+	if sid != "" {
+		pendingIP = ""
+	}
+	mgr.Check(ref, sid, pendingIP, "")
+	return mgr.WaitForDecision(ref, sid, pendingIP, "", p.ApprovalTimeout)
+}
+
+// matchLibraryRef checks if a stored approval pattern matches a library reference.
+// The pattern and ref are in "type:name" format. Delegates to library.MatchPackageRef
+// for the name part after checking type prefix.
+func matchLibraryRef(pattern, ref string) bool {
+	if pattern == ref {
+		return true
+	}
+	// Extract type prefix — both must match.
+	pIdx := strings.Index(pattern, ":")
+	rIdx := strings.Index(ref, ":")
+	if pIdx < 0 || rIdx < 0 {
+		return false
+	}
+	pType := pattern[:pIdx]
+	rType := ref[:rIdx]
+	if pType != rType {
+		return false
+	}
+	return library.MatchPackageRef(pattern[pIdx+1:], ref[rIdx+1:])
 }
 
 // ServeTransparentTLS accepts connections from the given listener and handles
