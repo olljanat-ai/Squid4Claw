@@ -29,7 +29,7 @@ const (
 	// AuthHeader is used by AI agents to provide their skill token.
 	AuthHeader = "X-Firewall4AI-Token"
 	// maxFullLogBody is the maximum body size captured in full logging mode.
-	maxFullLogBody = 64 * 1024 // 64 KB
+	maxFullLogBody = 256 * 1024 // 256 KB
 )
 
 // Proxy is the main proxy server.
