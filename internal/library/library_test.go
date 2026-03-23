@@ -226,15 +226,83 @@ func TestCheckPackageApproval_Wildcard(t *testing.T) {
 	}
 }
 
-func TestIsOSPackageType(t *testing.T) {
-	if !IsOSPackageType(PackageDebian) {
-		t.Error("expected Debian to be OS package type")
+func TestParsePackageName_Alpine(t *testing.T) {
+	tests := []struct {
+		path string
+		name string
+		ok   bool
+	}{
+		{"/v3.19/main/x86_64/curl-8.5.0-r0.apk", "curl", true},
+		{"/v3.19/community/x86_64/docker-24.0.7-r0.apk", "docker", true},
+		{"/v3.19/main/x86_64/APKINDEX.tar.gz", "", true}, // metadata
+		{"/v3.19/main/x86_64/", "", true},                 // index
 	}
-	if IsOSPackageType(PackageGo) {
-		t.Error("expected Go to not be OS package type")
+	for _, tt := range tests {
+		name, ok := ParsePackageName(tt.path, PackageAlpine)
+		if ok != tt.ok || name != tt.name {
+			t.Errorf("ParsePackageName(%q, alpine) = (%q, %v), want (%q, %v)",
+				tt.path, name, ok, tt.name, tt.ok)
+		}
 	}
-	if IsOSPackageType(PackageNPM) {
-		t.Error("expected npm to not be OS package type")
+}
+
+func TestParsePackageName_Ubuntu(t *testing.T) {
+	tests := []struct {
+		path string
+		name string
+		ok   bool
+	}{
+		{"/ubuntu/pool/main/o/openssl/openssl_3.0.2-0ubuntu1_amd64.deb", "openssl", true},
+		{"/ubuntu/pool/universe/n/nginx/nginx_1.24.0-1_amd64.deb", "nginx", true},
+		{"/ubuntu/dists/jammy/main/binary-amd64/Packages.gz", "", true}, // metadata
+		{"/ubuntu/dists/jammy/InRelease", "", true},                     // metadata
+	}
+	for _, tt := range tests {
+		name, ok := ParsePackageName(tt.path, PackageUbuntu)
+		if ok != tt.ok || name != tt.name {
+			t.Errorf("ParsePackageName(%q, ubuntu) = (%q, %v), want (%q, %v)",
+				tt.path, name, ok, tt.name, tt.ok)
+		}
+	}
+}
+
+func TestParsePackageName_Rust(t *testing.T) {
+	tests := []struct {
+		path string
+		name string
+		ok   bool
+	}{
+		{"/api/v1/crates/serde", "serde", true},
+		{"/api/v1/crates/serde/1.0.0/download", "serde", true},
+		{"/api/v1/crates/tokio-core", "tokio-core", true},
+		{"/", "", true}, // root
+	}
+	for _, tt := range tests {
+		name, ok := ParsePackageName(tt.path, PackageRust)
+		if ok != tt.ok || name != tt.name {
+			t.Errorf("ParsePackageName(%q, rust) = (%q, %v), want (%q, %v)",
+				tt.path, name, ok, tt.name, tt.ok)
+		}
+	}
+}
+
+func TestParsePackageName_PowerShell(t *testing.T) {
+	tests := []struct {
+		path string
+		name string
+		ok   bool
+	}{
+		{"/api/v2/package/Az/10.0.0", "Az", true},
+		{"/api/v2/package/PSReadLine/2.3.4", "PSReadLine", true},
+		{"/api/v2/package/Pester", "Pester", true},
+		{"/api/v2/", "", true}, // index
+	}
+	for _, tt := range tests {
+		name, ok := ParsePackageName(tt.path, PackagePowerShell)
+		if ok != tt.ok || name != tt.name {
+			t.Errorf("ParsePackageName(%q, powershell) = (%q, %v), want (%q, %v)",
+				tt.path, name, ok, tt.name, tt.ok)
+		}
 	}
 }
 

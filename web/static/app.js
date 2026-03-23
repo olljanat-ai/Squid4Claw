@@ -194,29 +194,61 @@ function getLibraryName(host) {
   return host.substring(idx + 1);
 }
 
+// Type label mapping — built dynamically from data, with known defaults.
+const typeLabels = {
+  golang: 'Go', npm: 'npm', pypi: 'PyPI', nuget: 'NuGet',
+  debian: 'Debian', alpine: 'Alpine', ubuntu: 'Ubuntu',
+  rust: 'Rust', powershell: 'PowerShell',
+};
+
 // Format library type as a badge.
 function formatLibraryType(host) {
   const t = getLibraryType(host);
-  const labels = { golang: 'Go', npm: 'npm', pypi: 'PyPI', nuget: 'NuGet', debian: 'Debian' };
-  return '<span class="badge-status approved">' + esc(labels[t] || t) + '</span>';
+  return '<span class="badge-status approved">' + esc(typeLabels[t] || t) + '</span>';
 }
 
-// Get the library filter including type.
-function getLibraryFilter() {
+// Get type-aware filter (used by packages and libraries pages).
+function getTypedFilter(prefix) {
   return {
-    type: document.getElementById('filter-library-type')?.value || '',
-    category: document.getElementById('filter-library-category')?.value || '',
-    skillID: document.getElementById('filter-library-skill')?.value || '',
-    ip: document.getElementById('filter-library-ip')?.value || '',
-    status: document.getElementById('filter-library-status')?.value || '',
+    type: document.getElementById('filter-' + prefix + '-type')?.value || '',
+    category: document.getElementById('filter-' + prefix + '-category')?.value || '',
+    skillID: document.getElementById('filter-' + prefix + '-skill')?.value || '',
+    ip: document.getElementById('filter-' + prefix + '-ip')?.value || '',
+    status: document.getElementById('filter-' + prefix + '-status')?.value || '',
   };
 }
 
+// Populate the type filter dropdown from the data.
+function populateTypeFilter(prefix, items) {
+  const types = [...new Set(items.map(a => getLibraryType(a.host)).filter(Boolean))].sort();
+  const opts = types.map(t => ({ value: t, label: typeLabels[t] || t }));
+  populateSelect('filter-' + prefix + '-type', opts, 'All types');
+}
+
+// Populate a type selector in a modal from an item list or all known types of a kind.
+function populateTypeSelect(selectId, typeKeys) {
+  const el = document.getElementById(selectId);
+  if (!el) return;
+  const current = el.value;
+  el.innerHTML = '';
+  typeKeys.forEach(t => {
+    const o = document.createElement('option');
+    o.value = t;
+    o.textContent = typeLabels[t] || t;
+    el.appendChild(o);
+  });
+  if (current && [...el.options].some(o => o.value === current)) {
+    el.value = current;
+  }
+}
+
 function clearFilters(prefix) {
+  const type = document.getElementById('filter-' + prefix + '-type');
   const cat = document.getElementById('filter-' + prefix + '-category');
   const skill = document.getElementById('filter-' + prefix + '-skill');
   const ip = document.getElementById('filter-' + prefix + '-ip');
   const status = document.getElementById('filter-' + prefix + '-status');
+  if (type) type.value = '';
   if (cat) cat.value = '';
   if (skill) skill.value = '';
   if (ip) ip.value = '';
@@ -703,9 +735,10 @@ async function loadPackages() {
     ]);
     currentPackages = packages || [];
     populateFilterDropdowns('package', currentPackages);
+    populateTypeFilter('package', currentPackages);
     const pending = currentPackages.filter(a => a.status === 'pending');
     updateBadge('package-badge', pending);
-    const filter = getFilter('package');
+    const filter = getTypedFilter('package');
     const filtered = currentPackages.filter(a => matchesFilter(a, filter));
     const tbody = document.getElementById('packages-tbody');
     tbody.innerHTML = '';
@@ -788,6 +821,8 @@ function showAddPackageRule() {
   editingPackageRule = null;
   document.getElementById('modal-package-title').textContent = 'Add OS Package Rule';
   document.getElementById('modal-package-submit').textContent = 'Add Rule';
+  const pkgTypes = [...new Set(currentPackages.map(a => getLibraryType(a.host)).filter(Boolean))].sort();
+  populateTypeSelect('package-rule-type', pkgTypes.length > 0 ? pkgTypes : Object.keys(typeLabels).filter(t => ['debian','alpine','ubuntu'].includes(t)));
   document.getElementById('package-rule-host').value = '';
   document.getElementById('package-rule-level').value = 'global';
   document.getElementById('package-rule-source-ip').value = '';
@@ -804,6 +839,9 @@ function showEditPackageRule(idx) {
   editingPackageRule = { host: a.host, skillID: a.skill_id || '', sourceIP: a.source_ip || '' };
   document.getElementById('modal-package-title').textContent = 'Edit OS Package Rule';
   document.getElementById('modal-package-submit').textContent = 'Save';
+  const pkgTypes = [...new Set(currentPackages.map(x => getLibraryType(x.host)).filter(Boolean))].sort();
+  populateTypeSelect('package-rule-type', pkgTypes.length > 0 ? pkgTypes : Object.keys(typeLabels).filter(t => ['debian','alpine','ubuntu'].includes(t)));
+  document.getElementById('package-rule-type').value = getLibraryType(a.host);
   document.getElementById('package-rule-host').value = getLibraryName(a.host);
   if (a.source_ip) {
     document.getElementById('package-rule-level').value = 'vm';
@@ -831,7 +869,8 @@ function updatePackageRuleFields() {
 async function submitPackageRule() {
   const name = document.getElementById('package-rule-host').value.trim();
   if (!name) { alert('Package name is required'); return; }
-  const host = 'debian:' + name;
+  const type = document.getElementById('package-rule-type').value;
+  const host = type + ':' + name;
   const level = document.getElementById('package-rule-level').value;
   const status = document.getElementById('package-rule-status').value;
   const category = document.getElementById('package-rule-category').value.trim();
@@ -864,9 +903,10 @@ async function loadLibraries() {
     ]);
     currentLibraries = libraries || [];
     populateFilterDropdowns('library', currentLibraries);
+    populateTypeFilter('library', currentLibraries);
     const pending = currentLibraries.filter(a => a.status === 'pending');
     updateBadge('library-badge', pending);
-    const filter = getLibraryFilter();
+    const filter = getTypedFilter('library');
     const filtered = currentLibraries.filter(a => matchesFilter(a, filter));
     const tbody = document.getElementById('libraries-tbody');
     tbody.innerHTML = '';
@@ -949,7 +989,8 @@ function showAddLibraryRule() {
   editingLibraryRule = null;
   document.getElementById('modal-library-title').textContent = 'Add Code Library Rule';
   document.getElementById('modal-library-submit').textContent = 'Add Rule';
-  document.getElementById('library-rule-type').value = 'golang';
+  const libTypes = [...new Set(currentLibraries.map(a => getLibraryType(a.host)).filter(Boolean))].sort();
+  populateTypeSelect('library-rule-type', libTypes.length > 0 ? libTypes : Object.keys(typeLabels).filter(t => !['debian','alpine','ubuntu'].includes(t)));
   document.getElementById('library-rule-name').value = '';
   document.getElementById('library-rule-level').value = 'global';
   document.getElementById('library-rule-source-ip').value = '';
@@ -966,6 +1007,8 @@ function showEditLibraryRule(idx) {
   editingLibraryRule = { host: a.host, skillID: a.skill_id || '', sourceIP: a.source_ip || '' };
   document.getElementById('modal-library-title').textContent = 'Edit Code Library Rule';
   document.getElementById('modal-library-submit').textContent = 'Save';
+  const libTypes = [...new Set(currentLibraries.map(x => getLibraryType(x.host)).filter(Boolean))].sort();
+  populateTypeSelect('library-rule-type', libTypes.length > 0 ? libTypes : Object.keys(typeLabels).filter(t => !['debian','alpine','ubuntu'].includes(t)));
   document.getElementById('library-rule-type').value = getLibraryType(a.host);
   document.getElementById('library-rule-name').value = getLibraryName(a.host);
   if (a.source_ip) {

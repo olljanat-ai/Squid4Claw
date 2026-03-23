@@ -124,6 +124,9 @@
           <button class="btn btn-primary" onclick="showAddPackageRule()">+ Add Package Rule</button>
         </div>
         <div class="filter-bar">
+          <select id="filter-package-type" onchange="loadPackages()">
+            <option value="">All types</option>
+          </select>
           <select id="filter-package-category" onchange="loadPackages()">
             <option value="">All categories</option>
           </select>
@@ -160,10 +163,6 @@
         <div class="filter-bar">
           <select id="filter-library-type" onchange="loadLibraries()">
             <option value="">All types</option>
-            <option value="golang">Go</option>
-            <option value="npm">npm</option>
-            <option value="pypi">PyPI</option>
-            <option value="nuget">NuGet</option>
           </select>
           <select id="filter-library-category" onchange="loadLibraries()">
             <option value="">All categories</option>
@@ -536,6 +535,11 @@
     <div class="modal">
       <h3 id="modal-package-title">Add OS Package Rule</h3>
       <div class="form-group">
+        <label>Type</label>
+        <select id="package-rule-type">
+        </select>
+      </div>
+      <div class="form-group">
         <label>Package Name (e.g., curl or lib* for wildcard)</label>
         <input type="text" id="package-rule-host" placeholder="e.g., curl">
       </div>
@@ -583,10 +587,6 @@
       <div class="form-group">
         <label>Type</label>
         <select id="library-rule-type">
-          <option value="golang">Go</option>
-          <option value="npm">npm</option>
-          <option value="pypi">PyPI</option>
-          <option value="nuget">NuGet</option>
         </select>
       </div>
       <div class="form-group">
