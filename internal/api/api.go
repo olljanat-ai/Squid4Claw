@@ -20,13 +20,15 @@ import (
 
 // Handler holds dependencies for API endpoints.
 type Handler struct {
-	Skills         *auth.SkillStore
-	Approvals      *approval.Manager
-	ImageApprovals *approval.Manager // image-level approvals for container registry
-	Credentials    *credentials.Manager
-	Logger         *proxylog.Logger
-	SaveFunc       func() error // called after state mutations to persist
-	Version        string       // build version string
+	Skills           *auth.SkillStore
+	Approvals        *approval.Manager
+	ImageApprovals   *approval.Manager // image-level approvals for container registry
+	PackageApprovals *approval.Manager // OS package approvals (e.g., Debian)
+	LibraryApprovals *approval.Manager // code library approvals (e.g., Go, npm, PyPI, NuGet)
+	Credentials      *credentials.Manager
+	Logger           *proxylog.Logger
+	SaveFunc         func() error // called after state mutations to persist
+	Version          string       // build version string
 
 	catMu      sync.RWMutex
 	categories []string
@@ -59,6 +61,20 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/images/decide", h.decideImageApproval)
 	mux.HandleFunc("PUT /api/images/category", h.setImageCategory)
 	mux.HandleFunc("DELETE /api/images", h.deleteImageApproval)
+
+	// OS Package Approvals (e.g., Debian)
+	mux.HandleFunc("GET /api/packages", h.listPackageApprovals)
+	mux.HandleFunc("GET /api/packages/pending", h.listPendingPackages)
+	mux.HandleFunc("POST /api/packages/decide", h.decidePackageApproval)
+	mux.HandleFunc("PUT /api/packages/category", h.setPackageCategory)
+	mux.HandleFunc("DELETE /api/packages", h.deletePackageApproval)
+
+	// Code Library Approvals (Go, npm, PyPI, NuGet)
+	mux.HandleFunc("GET /api/libraries", h.listLibraryApprovals)
+	mux.HandleFunc("GET /api/libraries/pending", h.listPendingLibraries)
+	mux.HandleFunc("POST /api/libraries/decide", h.decideLibraryApproval)
+	mux.HandleFunc("PUT /api/libraries/category", h.setLibraryCategory)
+	mux.HandleFunc("DELETE /api/libraries", h.deleteLibraryApproval)
 
 	// Logs
 	mux.HandleFunc("GET /api/logs", h.getLogs)
@@ -393,6 +409,114 @@ func (h *Handler) deleteImageApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.ImageApprovals.Delete(req.Host, req.SkillID, req.SourceIP, "")
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
+}
+
+// --- OS Package Approvals ---
+
+func (h *Handler) listPackageApprovals(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, h.PackageApprovals.ListAll())
+}
+
+func (h *Handler) listPendingPackages(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, h.PackageApprovals.ListPending())
+}
+
+func (h *Handler) decidePackageApproval(w http.ResponseWriter, r *http.Request) {
+	var req decisionRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Status != approval.StatusApproved && req.Status != approval.StatusDenied {
+		http.Error(w, "status must be 'approved' or 'denied'", http.StatusBadRequest)
+		return
+	}
+	h.PackageApprovals.Decide(req.Host, req.SkillID, req.SourceIP, "", req.Status, req.Note)
+	if req.Category != "" {
+		h.PackageApprovals.SetCategory(req.Host, req.SkillID, req.SourceIP, "", req.Category)
+	}
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
+}
+
+func (h *Handler) setPackageCategory(w http.ResponseWriter, r *http.Request) {
+	var req setCategoryRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	h.PackageApprovals.SetCategory(req.Host, req.SkillID, req.SourceIP, "", req.Category)
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
+}
+
+func (h *Handler) deletePackageApproval(w http.ResponseWriter, r *http.Request) {
+	var req deleteApprovalRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Host == "" {
+		http.Error(w, "host is required", http.StatusBadRequest)
+		return
+	}
+	h.PackageApprovals.Delete(req.Host, req.SkillID, req.SourceIP, "")
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
+}
+
+// --- Code Library Approvals ---
+
+func (h *Handler) listLibraryApprovals(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, h.LibraryApprovals.ListAll())
+}
+
+func (h *Handler) listPendingLibraries(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, h.LibraryApprovals.ListPending())
+}
+
+func (h *Handler) decideLibraryApproval(w http.ResponseWriter, r *http.Request) {
+	var req decisionRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Status != approval.StatusApproved && req.Status != approval.StatusDenied {
+		http.Error(w, "status must be 'approved' or 'denied'", http.StatusBadRequest)
+		return
+	}
+	h.LibraryApprovals.Decide(req.Host, req.SkillID, req.SourceIP, "", req.Status, req.Note)
+	if req.Category != "" {
+		h.LibraryApprovals.SetCategory(req.Host, req.SkillID, req.SourceIP, "", req.Category)
+	}
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
+}
+
+func (h *Handler) setLibraryCategory(w http.ResponseWriter, r *http.Request) {
+	var req setCategoryRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	h.LibraryApprovals.SetCategory(req.Host, req.SkillID, req.SourceIP, "", req.Category)
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
+}
+
+func (h *Handler) deleteLibraryApproval(w http.ResponseWriter, r *http.Request) {
+	var req deleteApprovalRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Host == "" {
+		http.Error(w, "host is required", http.StatusBadRequest)
+		return
+	}
+	h.LibraryApprovals.Delete(req.Host, req.SkillID, req.SourceIP, "")
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }

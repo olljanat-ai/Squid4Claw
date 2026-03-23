@@ -32,11 +32,13 @@ var Version = "dev"
 
 // storeData holds the persisted state.
 type storeData struct {
-	Skills         []auth.Skill             `json:"skills"`
-	Approvals      []approval.HostApproval  `json:"approvals"`
-	Creds          []credentials.Credential `json:"credentials"`
-	ImageApprovals []approval.HostApproval  `json:"image_approvals"`
-	Categories     []string                 `json:"categories"`
+	Skills           []auth.Skill             `json:"skills"`
+	Approvals        []approval.HostApproval  `json:"approvals"`
+	Creds            []credentials.Credential `json:"credentials"`
+	ImageApprovals   []approval.HostApproval  `json:"image_approvals"`
+	PackageApprovals []approval.HostApproval  `json:"package_approvals"`
+	LibraryApprovals []approval.HostApproval  `json:"library_approvals"`
+	Categories       []string                 `json:"categories"`
 }
 
 func main() {
@@ -72,6 +74,8 @@ func main() {
 	skills := auth.NewSkillStore()
 	approvals := approval.NewManager()
 	imageApprovals := approval.NewManager()
+	packageApprovals := approval.NewManager()
+	libraryApprovals := approval.NewManager()
 	creds := credentials.NewManager()
 	logger := proxylog.NewLogger(cfg.MaxLogEntries)
 
@@ -80,16 +84,20 @@ func main() {
 	skills.LoadSkills(state.Skills)
 	approvals.LoadApprovals(state.Approvals)
 	imageApprovals.LoadApprovals(state.ImageApprovals)
+	packageApprovals.LoadApprovals(state.PackageApprovals)
+	libraryApprovals.LoadApprovals(state.LibraryApprovals)
 	creds.LoadCredentials(state.Creds)
 
 	// Setup API handler early so we can load categories into it.
 	apiHandler := &api.Handler{
-		Skills:         skills,
-		Approvals:      approvals,
-		ImageApprovals: imageApprovals,
-		Credentials:    creds,
-		Logger:         logger,
-		Version:        Version,
+		Skills:           skills,
+		Approvals:        approvals,
+		ImageApprovals:   imageApprovals,
+		PackageApprovals: packageApprovals,
+		LibraryApprovals: libraryApprovals,
+		Credentials:      creds,
+		Logger:           logger,
+		Version:          Version,
 	}
 	apiHandler.LoadCategories(state.Categories)
 
@@ -99,6 +107,8 @@ func main() {
 			d.Skills = skills.ListSkills()
 			d.Approvals = approvals.Export()
 			d.ImageApprovals = imageApprovals.Export()
+			d.PackageApprovals = packageApprovals.Export()
+			d.LibraryApprovals = libraryApprovals.Export()
 			d.Creds = creds.List()
 			d.Categories = apiHandler.ListCategoriesSlice()
 		})
@@ -109,9 +119,15 @@ func main() {
 	p := proxy.New(skills, approvals, creds, logger)
 	p.CA = ca
 	p.ImageApprovals = imageApprovals
+	p.PackageApprovals = packageApprovals
+	p.LibraryApprovals = libraryApprovals
 	p.Registries = cfg.Registries
+	p.PackageRepos = cfg.PackageRepos
 	for _, reg := range cfg.Registries {
 		log.Printf("Container registry %s: intercepting hosts %v", reg.Name, reg.Hosts)
+	}
+	for _, repo := range cfg.PackageRepos {
+		log.Printf("Package repository %s (%s): intercepting hosts %v", repo.Name, repo.Type, repo.Hosts)
 	}
 	proxyServer := &http.Server{
 		Addr:         cfg.ListenAddr,
