@@ -33,7 +33,8 @@ type Config struct {
 	TLSKeyFile         string              `json:"tls_key_file"`
 	MaxLogEntries      int                 `json:"max_log_entries"`
 	Registries         []RegistryConfig    `json:"registries"`
-	PackageRepos       []PackageRepoConfig `json:"package_repos"`
+	OSPackages         []PackageRepoConfig `json:"os_packages"`
+	CodeLibraries      []PackageRepoConfig `json:"code_libraries"`
 }
 
 var (

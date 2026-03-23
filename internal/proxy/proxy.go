@@ -41,7 +41,8 @@ type Proxy struct {
 	PackageApprovals *approval.Manager // OS package approvals (e.g., Debian)
 	LibraryApprovals *approval.Manager // code library approvals (e.g., Go, npm, PyPI, NuGet)
 	Registries       []config.RegistryConfig
-	PackageRepos     []config.PackageRepoConfig
+	OSPackages       []config.PackageRepoConfig
+	CodeLibraries    []config.PackageRepoConfig
 	Credentials      *credentials.Manager
 	Logger           *proxylog.Logger
 	Transport        http.RoundTripper
@@ -563,8 +564,12 @@ func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, 
 	}
 
 	// Check if this is a package repository request.
-	if repo := library.RepoForHost(host, p.PackageRepos); repo != nil {
-		p.handlePackageRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, start)
+	if repo := library.RepoForHost(host, p.OSPackages); repo != nil {
+		p.handlePackageRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, true, start)
+		return
+	}
+	if repo := library.RepoForHost(host, p.CodeLibraries); repo != nil {
+		p.handlePackageRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, false, start)
 		return
 	}
 
@@ -796,8 +801,12 @@ func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Reque
 	}
 
 	// Check if this is a package repository request.
-	if repo := library.RepoForHost(host, p.PackageRepos); repo != nil {
-		p.handlePackageRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, start)
+	if repo := library.RepoForHost(host, p.OSPackages); repo != nil {
+		p.handlePackageRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, true, start)
+		return
+	}
+	if repo := library.RepoForHost(host, p.CodeLibraries); repo != nil {
+		p.handlePackageRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, false, start)
 		return
 	}
 
@@ -995,11 +1004,10 @@ func (p *Proxy) handleRegistryTLSRequest(clientConn net.Conn, req *http.Request,
 // handlePackageRepoTLSRequest handles a request to a known package repository host.
 // Package-specific requests trigger package-level approval; metadata requests are
 // auto-approved since the repo host is configured explicitly.
-func (p *Proxy) handlePackageRepoTLSRequest(clientConn net.Conn, req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, start time.Time) {
+func (p *Proxy) handlePackageRepoTLSRequest(clientConn net.Conn, req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, isOSPkg bool, start time.Time) {
 	sid := getSkillID(skill)
 	urlPath := req.URL.Path
 	repoType := library.PackageType(repo.Type)
-	isOSPkg := library.IsOSPackageType(repoType)
 
 	pkgName, ok := library.ParsePackageName(urlPath, repoType)
 	if !ok {

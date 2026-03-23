@@ -1,7 +1,7 @@
 // Package library provides utility functions for detecting and handling
 // package manager requests within the transparent proxy. It handles
-// package name extraction from URL paths for Debian (apt), Go modules,
-// npm, PyPI, and NuGet repositories.
+// package name extraction from URL paths for OS packages (Debian, Alpine,
+// Ubuntu) and code libraries (Go, npm, PyPI, NuGet, Rust, PowerShell).
 package library
 
 import (
@@ -15,11 +15,15 @@ import (
 type PackageType string
 
 const (
-	PackageDebian PackageType = "debian"
-	PackageGo     PackageType = "golang"
-	PackageNPM    PackageType = "npm"
-	PackagePyPI   PackageType = "pypi"
-	PackageNuGet  PackageType = "nuget"
+	PackageDebian     PackageType = "debian"
+	PackageAlpine     PackageType = "alpine"
+	PackageUbuntu     PackageType = "ubuntu"
+	PackageGo         PackageType = "golang"
+	PackageNPM        PackageType = "npm"
+	PackagePyPI       PackageType = "pypi"
+	PackageNuGet      PackageType = "nuget"
+	PackageRust       PackageType = "rust"
+	PackagePowerShell PackageType = "powershell"
 )
 
 // RepoForHost returns the package repository config if the host belongs to
@@ -48,8 +52,10 @@ func RepoForHost(host string, repos []config.PackageRepoConfig) *config.PackageR
 //   - NuGet: /v3-flatcontainer/newtonsoft.json/13.0.1/newtonsoft.json.13.0.1.nupkg -> "newtonsoft.json"
 func ParsePackageName(urlPath string, repoType PackageType) (name string, ok bool) {
 	switch repoType {
-	case PackageDebian:
+	case PackageDebian, PackageUbuntu:
 		return parseDebianPath(urlPath)
+	case PackageAlpine:
+		return parseAlpinePath(urlPath)
 	case PackageGo:
 		return parseGoPath(urlPath)
 	case PackageNPM:
@@ -58,6 +64,10 @@ func ParsePackageName(urlPath string, repoType PackageType) (name string, ok boo
 		return parsePyPIPath(urlPath)
 	case PackageNuGet:
 		return parseNuGetPath(urlPath)
+	case PackageRust:
+		return parseRustPath(urlPath)
+	case PackagePowerShell:
+		return parsePowerShellPath(urlPath)
 	}
 	return "", false
 }
@@ -282,6 +292,104 @@ func parseNuGetPath(urlPath string) (string, bool) {
 	return "", true
 }
 
+// parseAlpinePath extracts a package name from Alpine Linux APK repository URLs.
+// Pattern: /<version>/<repo>/<arch>/<package>-<version>-<release>.apk -> "<package>"
+// Example: /v3.19/main/x86_64/curl-8.5.0-r0.apk -> "curl"
+// Index files (APKINDEX.tar.gz) return empty (auto-approve).
+func parseAlpinePath(urlPath string) (string, bool) {
+	// APK package download.
+	if strings.HasSuffix(urlPath, ".apk") {
+		parts := strings.Split(urlPath, "/")
+		if len(parts) > 0 {
+			filename := parts[len(parts)-1]
+			return extractAPKPackageName(filename), true
+		}
+	}
+
+	// Index and metadata files - auto-approve.
+	return "", true
+}
+
+// extractAPKPackageName extracts the package name from an APK filename.
+// Alpine APK filenames: <name>-<version>-r<release>.apk
+// Need to find where the version starts (first segment starting with digit after name).
+func extractAPKPackageName(filename string) string {
+	filename = strings.TrimSuffix(filename, ".apk")
+	parts := strings.Split(filename, "-")
+	var nameParts []string
+	for _, p := range parts {
+		if len(p) > 0 && p[0] >= '0' && p[0] <= '9' {
+			break
+		}
+		nameParts = append(nameParts, p)
+	}
+	if len(nameParts) > 0 {
+		return strings.Join(nameParts, "-")
+	}
+	return ""
+}
+
+// parseRustPath extracts a Rust crate name from crates.io URLs.
+// API: /api/v1/crates/<crate> or /api/v1/crates/<crate>/<version>/download
+// Sparse index: /config.json (metadata), /<prefix>/<crate> (index entry)
+// CDN: /crates/<crate>/<crate>-<version>.crate
+func parseRustPath(urlPath string) (string, bool) {
+	// API endpoint: /api/v1/crates/<crate>
+	if strings.HasPrefix(urlPath, "/api/v1/crates/") {
+		rest := urlPath[15:] // after "/api/v1/crates/"
+		parts := strings.SplitN(rest, "/", 2)
+		if len(parts) >= 1 && parts[0] != "" {
+			return parts[0], true
+		}
+		return "", true
+	}
+
+	// CDN crate download: /crates/<crate>/<crate>-<version>.crate
+	if strings.HasPrefix(urlPath, "/crates/") {
+		rest := urlPath[8:] // after "/crates/"
+		parts := strings.SplitN(rest, "/", 2)
+		if len(parts) >= 1 && parts[0] != "" {
+			return parts[0], true
+		}
+		return "", true
+	}
+
+	// Sparse index config or other metadata - auto-approve.
+	return "", true
+}
+
+// parsePowerShellPath extracts a PowerShell module name from PowerShell Gallery URLs.
+// API: /api/v2/package/<module>/<version>
+// Search/metadata: /api/v2/FindPackagesById()?id='<module>'
+// Also: /api/v2/Packages(Id='<module>',Version='<version>')
+func parsePowerShellPath(urlPath string) (string, bool) {
+	// Package download: /api/v2/package/<module>/<version>
+	if strings.HasPrefix(urlPath, "/api/v2/package/") {
+		rest := urlPath[16:] // after "/api/v2/package/"
+		parts := strings.SplitN(rest, "/", 2)
+		if len(parts) >= 1 && parts[0] != "" {
+			return parts[0], true
+		}
+		return "", true
+	}
+
+	// Package metadata with ID in path: /api/v2/Packages(Id='<module>'
+	if strings.Contains(urlPath, "Id='") || strings.Contains(urlPath, "id='") {
+		lower := strings.ToLower(urlPath)
+		idx := strings.Index(lower, "id='")
+		if idx >= 0 {
+			rest := urlPath[idx+4:]
+			end := strings.Index(rest, "'")
+			if end > 0 {
+				return rest[:end], true
+			}
+		}
+	}
+
+	// Other API/metadata - auto-approve.
+	return "", true
+}
+
 // CheckPackageApproval returns true if the package (or a broader wildcard
 // pattern covering it) has been approved.
 func CheckPackageApproval(mgr *approval.Manager, pkg string) bool {
@@ -315,25 +423,21 @@ func MatchPackageRef(pattern, pkg string) bool {
 	return false
 }
 
-// IsOSPackageType returns true if the package type is an OS-level package.
-func IsOSPackageType(t PackageType) bool {
-	return t == PackageDebian
-}
-
 // TypeLabel returns a human-readable label for the package type.
 func TypeLabel(t PackageType) string {
-	switch t {
-	case PackageDebian:
-		return "Debian"
-	case PackageGo:
-		return "Go"
-	case PackageNPM:
-		return "npm"
-	case PackagePyPI:
-		return "PyPI"
-	case PackageNuGet:
-		return "NuGet"
-	default:
-		return string(t)
+	labels := map[PackageType]string{
+		PackageDebian:     "Debian",
+		PackageAlpine:     "Alpine",
+		PackageUbuntu:     "Ubuntu",
+		PackageGo:         "Go",
+		PackageNPM:        "npm",
+		PackagePyPI:       "PyPI",
+		PackageNuGet:      "NuGet",
+		PackageRust:       "Rust",
+		PackagePowerShell: "PowerShell",
 	}
+	if l, ok := labels[t]; ok {
+		return l
+	}
+	return string(t)
 }

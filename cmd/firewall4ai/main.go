@@ -122,12 +122,16 @@ func main() {
 	p.PackageApprovals = packageApprovals
 	p.LibraryApprovals = libraryApprovals
 	p.Registries = cfg.Registries
-	p.PackageRepos = cfg.PackageRepos
+	p.OSPackages = cfg.OSPackages
+	p.CodeLibraries = cfg.CodeLibraries
 	for _, reg := range cfg.Registries {
 		log.Printf("Container registry %s: intercepting hosts %v", reg.Name, reg.Hosts)
 	}
-	for _, repo := range cfg.PackageRepos {
-		log.Printf("Package repository %s (%s): intercepting hosts %v", repo.Name, repo.Type, repo.Hosts)
+	for _, repo := range cfg.OSPackages {
+		log.Printf("OS package repo %s (%s): intercepting hosts %v", repo.Name, repo.Type, repo.Hosts)
+	}
+	for _, repo := range cfg.CodeLibraries {
+		log.Printf("Code library repo %s (%s): intercepting hosts %v", repo.Name, repo.Type, repo.Hosts)
 	}
 	proxyServer := &http.Server{
 		Addr:         cfg.ListenAddr,
