@@ -39,6 +39,7 @@ type storeData struct {
 	PackageApprovals []approval.HostApproval  `json:"package_approvals"`
 	LibraryApprovals []approval.HostApproval  `json:"library_approvals"`
 	Categories       []string                 `json:"categories"`
+	LearningMode     bool                     `json:"learning_mode"`
 }
 
 func main() {
@@ -88,6 +89,11 @@ func main() {
 	libraryApprovals.LoadApprovals(state.LibraryApprovals)
 	creds.LoadCredentials(state.Creds)
 
+	// Restore learning mode from persisted state.
+	if state.LearningMode {
+		config.SetLearningMode(true)
+	}
+
 	// Setup API handler early so we can load categories into it.
 	apiHandler := &api.Handler{
 		Skills:           skills,
@@ -111,6 +117,7 @@ func main() {
 			d.LibraryApprovals = libraryApprovals.Export()
 			d.Creds = creds.List()
 			d.Categories = apiHandler.ListCategoriesSlice()
+			d.LearningMode = config.Get().LearningMode
 		})
 	}
 	apiHandler.SaveFunc = saveFunc
@@ -124,6 +131,18 @@ func main() {
 	p.Registries = cfg.Registries
 	p.OSPackages = cfg.OSPackages
 	p.CodeLibraries = cfg.CodeLibraries
+	p.LearningMode = config.Get().LearningMode
+	if p.LearningMode {
+		log.Printf("Learning mode is ENABLED — all connections will be allowed by default")
+	}
+	apiHandler.SetLearningModeFunc = func(enabled bool) {
+		p.LearningMode = enabled
+		if enabled {
+			log.Printf("Learning mode ENABLED — all connections will be allowed by default")
+		} else {
+			log.Printf("Learning mode DISABLED — returning to default-deny")
+		}
+	}
 	for _, reg := range cfg.Registries {
 		log.Printf("Container registry %s: intercepting hosts %v", reg.Name, reg.Hosts)
 	}

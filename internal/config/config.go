@@ -35,6 +35,14 @@ type Config struct {
 	Registries         []RegistryConfig    `json:"registries"`
 	OSPackages         []PackageRepoConfig `json:"os_packages"`
 	CodeLibraries      []PackageRepoConfig `json:"code_libraries"`
+	LearningMode       bool                `json:"learning_mode"`
+}
+
+// SetLearningMode updates the learning mode setting at runtime.
+func SetLearningMode(enabled bool) {
+	mu.Lock()
+	defer mu.Unlock()
+	current.LearningMode = enabled
 }
 
 var (

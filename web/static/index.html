@@ -275,6 +275,19 @@
           <div id="categories-list" style="padding-top:8px"></div>
         </div>
         <div class="card">
+          <h3>Learning Mode</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Learning Mode</div>
+              <div class="setting-desc">When enabled, all connections are allowed by default while still being logged and shown in the UI. Useful for monitoring traffic before enforcing restrictions.</div>
+            </div>
+            <div class="setting-control">
+              <span id="learning-mode-status" class="badge-status">loading...</span>
+              <button id="learning-mode-toggle-btn" class="btn btn-outline btn-sm" onclick="toggleLearningMode()" disabled>Toggle</button>
+            </div>
+          </div>
+        </div>
+        <div class="card">
           <h3>SSH Access</h3>
           <div class="setting-row">
             <div class="setting-info">

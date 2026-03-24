@@ -14,6 +14,7 @@ import (
 
 	"github.com/olljanat-ai/firewall4ai/internal/approval"
 	"github.com/olljanat-ai/firewall4ai/internal/auth"
+	"github.com/olljanat-ai/firewall4ai/internal/config"
 	"github.com/olljanat-ai/firewall4ai/internal/credentials"
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 )
@@ -27,8 +28,9 @@ type Handler struct {
 	LibraryApprovals *approval.Manager // code library approvals (e.g., Go, npm, PyPI, NuGet)
 	Credentials      *credentials.Manager
 	Logger           *proxylog.Logger
-	SaveFunc         func() error // called after state mutations to persist
-	Version          string       // build version string
+	SaveFunc            func() error    // called after state mutations to persist
+	SetLearningModeFunc func(bool)      // called to update learning mode on the proxy
+	Version             string          // build version string
 
 	catMu      sync.RWMutex
 	categories []string
@@ -95,6 +97,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// System settings
 	mux.HandleFunc("GET /api/settings/ssh", h.getSSHStatus)
 	mux.HandleFunc("POST /api/settings/ssh", h.setSSHStatus)
+	mux.HandleFunc("GET /api/settings/learning-mode", h.getLearningMode)
+	mux.HandleFunc("POST /api/settings/learning-mode", h.setLearningMode)
 	mux.HandleFunc("POST /api/system/upgrade", h.systemUpgrade)
 	mux.HandleFunc("POST /api/system/reboot", h.systemReboot)
 }
@@ -743,6 +747,29 @@ func (h *Handler) systemReboot(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(1 * time.Second)
 		exec.Command("reboot").Run()
 	}()
+}
+
+// --- Learning Mode ---
+
+func (h *Handler) getLearningMode(w http.ResponseWriter, r *http.Request) {
+	cfg := config.Get()
+	writeJSON(w, http.StatusOK, map[string]bool{"enabled": cfg.LearningMode})
+}
+
+func (h *Handler) setLearningMode(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	config.SetLearningMode(req.Enabled)
+	if h.SetLearningModeFunc != nil {
+		h.SetLearningModeFunc(req.Enabled)
+	}
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]bool{"enabled": req.Enabled})
 }
 
 func (h *Handler) save() {

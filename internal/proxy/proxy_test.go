@@ -636,5 +636,55 @@ func TestProxy_HTTPPackageRepoMetadata_AutoApproved(t *testing.T) {
 	}
 }
 
+func TestProxy_LearningMode(t *testing.T) {
+	p, skills, approvals := setupProxy(t)
+	skills.AddSkill(auth.Skill{ID: "s1", Token: "tok-1", Active: true})
+	p.LearningMode = true
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("learning mode ok"))
+	}))
+	defer backend.Close()
+
+	req := httptest.NewRequest("GET", backend.URL+"/test", nil)
+	req.Host = "unapproved.example.com"
+	req.Header.Set(AuthHeader, "tok-1")
+	w := httptest.NewRecorder()
+	p.handleHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("learning mode: expected 200, got %d", w.Code)
+	}
+
+	// The host should be registered as pending in the approval system.
+	pending := approvals.ListPending()
+	found := false
+	for _, a := range pending {
+		if a.Host == "unapproved.example.com" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("learning mode: expected pending approval entry for unapproved.example.com")
+	}
+}
+
+func TestProxy_LearningModeDisabled(t *testing.T) {
+	p, skills, _ := setupProxy(t)
+	skills.AddSkill(auth.Skill{ID: "s1", Token: "tok-1", Active: true})
+	p.LearningMode = false // default-deny
+
+	req := httptest.NewRequest("GET", "http://blocked.com/test", nil)
+	req.Header.Set(AuthHeader, "tok-1")
+	w := httptest.NewRecorder()
+	p.handleHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("default-deny: expected 403, got %d", w.Code)
+	}
+}
+
 // Alias for use in test file.
 var StatusApproved = approval.StatusApproved

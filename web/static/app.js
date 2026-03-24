@@ -1604,6 +1604,29 @@ async function loadSettings() {
   } catch (e) {
     console.error('Settings load error:', e);
   }
+  try {
+    const data = await api('GET', '/api/settings/learning-mode');
+    const statusEl = document.getElementById('learning-mode-status');
+    const btn = document.getElementById('learning-mode-toggle-btn');
+    statusEl.textContent = data.enabled ? 'enabled' : 'disabled';
+    statusEl.className = 'badge-status ' + (data.enabled ? 'approved' : 'denied');
+    btn.textContent = data.enabled ? 'Disable' : 'Enable';
+    btn.disabled = false;
+  } catch (e) {
+    console.error('Learning mode load error:', e);
+  }
+}
+
+async function toggleLearningMode() {
+  const statusEl = document.getElementById('learning-mode-status');
+  const isEnabled = statusEl.textContent === 'enabled';
+  if (!confirm(isEnabled ? 'Disable Learning Mode? New connections will require approval.' : 'Enable Learning Mode? All connections will be allowed by default.')) return;
+  try {
+    await api('POST', '/api/settings/learning-mode', { enabled: !isEnabled });
+    loadSettings();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
 }
 
 async function toggleSSH() {

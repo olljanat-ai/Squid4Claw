@@ -48,6 +48,7 @@ type Proxy struct {
 	Transport        http.RoundTripper
 	CA               *certgen.CA
 	ApprovalTimeout  time.Duration
+	LearningMode     bool // when true, allow all traffic by default (still logged)
 }
 
 // New creates a new Proxy with the given dependencies.
@@ -163,6 +164,9 @@ func (p *Proxy) checkApproval(host, path string, skill *auth.Skill, sourceIP str
 	}
 	status := p.Approvals.Check(host, sid, pendingIP, path)
 	if status == approval.StatusPending {
+		if p.LearningMode {
+			return approval.StatusApproved
+		}
 		status = p.Approvals.WaitForDecision(host, sid, pendingIP, path, p.ApprovalTimeout)
 	}
 	return status
@@ -205,6 +209,9 @@ func (p *Proxy) checkHostApproval(host string, skill *auth.Skill, sourceIP strin
 	}
 	status := p.Approvals.Check(host, sid, pendingIP, "")
 	if status == approval.StatusPending {
+		if p.LearningMode {
+			return approval.StatusApproved
+		}
 		status = p.Approvals.WaitForDecision(host, sid, pendingIP, "", p.ApprovalTimeout)
 	}
 	return status
@@ -236,8 +243,14 @@ func (p *Proxy) checkImageApproval(imageRef string, skill *auth.Skill, sourceIP 
 	if sid != "" {
 		pendingIP = ""
 	}
-	p.ImageApprovals.Check(imageRef, sid, pendingIP, "")
-	return p.ImageApprovals.WaitForDecision(imageRef, sid, pendingIP, "", p.ApprovalTimeout)
+	status := p.ImageApprovals.Check(imageRef, sid, pendingIP, "")
+	if status == approval.StatusPending {
+		if p.LearningMode {
+			return approval.StatusApproved
+		}
+		return p.ImageApprovals.WaitForDecision(imageRef, sid, pendingIP, "", p.ApprovalTimeout)
+	}
+	return status
 }
 
 // captureRequestBody reads the request body (up to maxFullLogBody) and replaces it
@@ -1247,8 +1260,14 @@ func (p *Proxy) checkLibraryApproval(mgr *approval.Manager, pkgName string, repo
 	if sid != "" {
 		pendingIP = ""
 	}
-	mgr.Check(ref, sid, pendingIP, "")
-	return mgr.WaitForDecision(ref, sid, pendingIP, "", p.ApprovalTimeout)
+	status := mgr.Check(ref, sid, pendingIP, "")
+	if status == approval.StatusPending {
+		if p.LearningMode {
+			return approval.StatusApproved
+		}
+		return mgr.WaitForDecision(ref, sid, pendingIP, "", p.ApprovalTimeout)
+	}
+	return status
 }
 
 // matchLibraryRef checks if a stored approval pattern matches a library reference.
