@@ -120,8 +120,11 @@ async function loadDashboard() {
         const vmBtn = a.source_ip ? `<button class="btn btn-success btn-sm" onclick="decideDash('${apiPath}','${esc(a.host)}','','${esc(a.source_ip)}','${esc(pp)}','approved')" title="Approve for this VM">Approve VM</button>` : '';
         const globalBtn = (a.skill_id || a.source_ip) ? `<button class="btn btn-success btn-sm" onclick="decideDash('${apiPath}','${esc(a.host)}','','','${esc(pp)}','approved')" title="Approve for all agents">Approve Global</button>` : '';
         const denyBtn = `<button class="btn btn-danger btn-sm" onclick="decideDash('${apiPath}','${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','denied')">Deny</button>`;
+        const hostDisplay = (a._type === 'package' || a._type === 'library')
+          ? formatLibraryType(a.host) + ' <strong>' + formatLibraryName(a.host) + '</strong>'
+          : '<strong>' + esc(a.host) + '</strong>';
         tbody.innerHTML += `<tr>
-          <td>${typeLabel}<strong>${esc(a.host)}</strong></td>
+          <td>${typeLabel}${hostDisplay}</td>
           <td>${pathDisplay}</td>
           <td>${skillDisplay}</td>
           <td>${sourceDisplay}</td>
@@ -200,6 +203,35 @@ const typeLabels = {
   debian: 'Debian', alpine: 'Alpine', ubuntu: 'Ubuntu',
   rust: 'Rust', powershell: 'PowerShell',
 };
+
+// Get the official web page URL for a library/package by type and name.
+function getLibraryUrl(host) {
+  const t = getLibraryType(host);
+  const name = getLibraryName(host);
+  if (!t || !name) return '';
+  const urls = {
+    debian: 'https://packages.debian.org/' + encodeURIComponent(name),
+    ubuntu: 'https://packages.ubuntu.com/' + encodeURIComponent(name),
+    alpine: 'https://pkgs.alpinelinux.org/packages?name=' + encodeURIComponent(name),
+    golang: 'https://pkg.go.dev/' + name,
+    npm: 'https://www.npmjs.com/package/' + name,
+    pypi: 'https://pypi.org/project/' + encodeURIComponent(name),
+    nuget: 'https://www.nuget.org/packages/' + encodeURIComponent(name),
+    rust: 'https://crates.io/crates/' + encodeURIComponent(name),
+    powershell: 'https://www.powershellgallery.com/packages/' + encodeURIComponent(name),
+  };
+  return urls[t] || '';
+}
+
+// Format library name as a link to its official page, or plain text if no URL.
+function formatLibraryName(host) {
+  const name = esc(getLibraryName(host));
+  const url = getLibraryUrl(host);
+  if (url) {
+    return '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + name + '</a>';
+  }
+  return name;
+}
 
 // Format library type as a badge.
 function formatLibraryType(host) {
@@ -753,7 +785,7 @@ async function loadPackages() {
       const sourceDisplay = formatSourceIP(a.source_ip);
       const categoryDisplay = formatCategory(a.category);
       const typeDisplay = formatLibraryType(a.host);
-      const nameDisplay = esc(getLibraryName(a.host));
+      const nameDisplay = formatLibraryName(a.host);
       const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditPackageRule(${idx})" title="Edit rule">Edit</button>`;
       const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deletePackage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}')" title="Delete rule">Delete</button>`;
       let actions = '';
@@ -921,7 +953,7 @@ async function loadLibraries() {
       const sourceDisplay = formatSourceIP(a.source_ip);
       const categoryDisplay = formatCategory(a.category);
       const typeDisplay = formatLibraryType(a.host);
-      const nameDisplay = esc(getLibraryName(a.host));
+      const nameDisplay = formatLibraryName(a.host);
       const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditLibraryRule(${idx})" title="Edit rule">Edit</button>`;
       const deleteBtn = `<button class="btn btn-danger btn-sm" onclick="deleteLibrary('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}')" title="Delete rule">Delete</button>`;
       let actions = '';
