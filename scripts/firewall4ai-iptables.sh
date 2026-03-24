@@ -94,10 +94,10 @@ iptables -A FORWARD -i $EXTERNAL_IF -j ACCEPT
 # ============================================================
 
 # Redirect HTTP to proxy server (transparent HTTP)
-iptables -t nat -A PREROUTING -i $INTERNAL_IF -p tcp --dport 80 -j REDIRECT --to-port $PROXY_PORT
+iptables -t nat -A PREROUTING -i $INTERNAL_IF -p tcp --dport 80 ! -d $PROXY_IP -j REDIRECT --to-port $PROXY_PORT
 
 # Redirect HTTPS to transparent TLS interceptor
-iptables -t nat -A PREROUTING -i $INTERNAL_IF -p tcp --dport 443 -j REDIRECT --to-port $TRANSPARENT_TLS_PORT
+iptables -t nat -A PREROUTING -i $INTERNAL_IF -p tcp --dport 443 ! -d $PROXY_IP -j REDIRECT --to-port $TRANSPARENT_TLS_PORT
 
 # ============================================================
 # NAT: masquerade proxy's outbound connections via eth0
