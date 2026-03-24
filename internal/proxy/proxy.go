@@ -929,11 +929,14 @@ func (p *Proxy) handleRegistryTLSRequest(clientConn net.Conn, req *http.Request,
 	if isV2 && (pathType == "manifests" || pathType == "blobs") {
 		// Manifest and blob requests use repo-level approval.
 		// Approving a repo allows all tags, digests, and layers.
+		// In learning mode, skip the fast-path check since pending entries
+		// won't match; go through checkImageApproval which handles learning mode.
 		repo := registry.ParseImageRepo(reg.Name, name)
-		if !registry.CheckRepoApproval(p.ImageApprovals, repo) {
-			if pathType == "blobs" {
+		if p.LearningMode || !registry.CheckRepoApproval(p.ImageApprovals, repo) {
+			if pathType == "blobs" && !p.LearningMode {
 				// Blobs don't create pending entries; they are only
 				// allowed if the repo was already approved via a manifest.
+				// In learning mode, blobs are allowed like manifests.
 				p.Logger.Add(proxylog.Entry{
 					SkillID: sid,
 					Method:  req.Method,
@@ -951,7 +954,7 @@ func (p *Proxy) handleRegistryTLSRequest(clientConn net.Conn, req *http.Request,
 				resp.Write(clientConn)
 				return
 			}
-			// Manifest: register pending and wait for admin decision.
+			// Manifest (or blob in learning mode): register pending and wait.
 			status := p.checkImageApproval(repo, skill, sourceIP)
 			if status != approval.StatusApproved {
 				p.Logger.Add(proxylog.Entry{
@@ -1062,7 +1065,12 @@ func (p *Proxy) handlePackageRepoHTTPRequest(w http.ResponseWriter, req *http.Re
 			mgr = p.PackageApprovals
 		}
 
-		if !library.CheckPackageApproval(mgr, pkgName) {
+		// In learning mode, skip the fast-path check since pending entries
+		// (created by learning mode) won't match. Go directly through
+		// checkLibraryApproval which handles learning mode.
+		if !p.LearningMode && library.CheckPackageApproval(mgr, pkgName) {
+			// already approved — fast path
+		} else {
 			status := p.checkLibraryApproval(mgr, pkgName, repoType, skill, sourceIP)
 			if status != approval.StatusApproved {
 				p.Logger.Add(proxylog.Entry{
@@ -1170,7 +1178,12 @@ func (p *Proxy) handlePackageRepoTLSRequest(clientConn net.Conn, req *http.Reque
 			mgr = p.PackageApprovals
 		}
 
-		if !library.CheckPackageApproval(mgr, pkgName) {
+		// In learning mode, skip the fast-path check since pending entries
+		// (created by learning mode) won't match. Go directly through
+		// checkLibraryApproval which handles learning mode.
+		if !p.LearningMode && library.CheckPackageApproval(mgr, pkgName) {
+			// already approved — fast path
+		} else {
 			status := p.checkLibraryApproval(mgr, pkgName, repoType, skill, sourceIP)
 			if status != approval.StatusApproved {
 				p.Logger.Add(proxylog.Entry{

@@ -686,5 +686,181 @@ func TestProxy_LearningModeDisabled(t *testing.T) {
 	}
 }
 
+func TestProxy_LearningMode_Package(t *testing.T) {
+	p, _, _ := setupProxy(t)
+	p.PackageApprovals = approval.NewManager()
+	p.OSPackages = []config.PackageRepoConfig{
+		{Name: "Debian", Type: "debian", Hosts: []string{"deb.debian.org"}},
+	}
+	p.LearningMode = true
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	// Request a Debian package without explicit approval — learning mode should allow it.
+	req := httptest.NewRequest("GET", backend.URL+"/debian/pool/main/c/curl/curl_7.88.1-10_amd64.deb", nil)
+	req.Host = "deb.debian.org"
+	w := httptest.NewRecorder()
+	p.handleHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("learning mode package: expected 200, got %d", w.Code)
+	}
+
+	// Verify the package shows as pending.
+	pending := p.PackageApprovals.ListPending()
+	found := false
+	for _, a := range pending {
+		if a.Host == "debian:curl" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("learning mode: expected pending approval for debian:curl")
+	}
+}
+
+func TestProxy_LearningMode_Library(t *testing.T) {
+	p, _, _ := setupProxy(t)
+	p.LibraryApprovals = approval.NewManager()
+	p.CodeLibraries = []config.PackageRepoConfig{
+		{Name: "Go Proxy", Type: "golang", Hosts: []string{"proxy.golang.org"}},
+	}
+	p.LearningMode = true
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	// Request a Go module without explicit approval — learning mode should allow it.
+	req := httptest.NewRequest("GET", backend.URL+"/github.com/gorilla/mux/@v/v1.8.0.mod", nil)
+	req.Host = "proxy.golang.org"
+	w := httptest.NewRecorder()
+	p.handleHTTP(w, req)
+
+	// Go proxy uses HTTPS normally, but this tests the HTTP handler path.
+	// The request will go through handlePackageRepoHTTPRequest since the host matches.
+	if w.Code != http.StatusOK {
+		t.Errorf("learning mode library: expected 200, got %d", w.Code)
+	}
+
+	// Verify the library shows as pending.
+	pending := p.LibraryApprovals.ListPending()
+	found := false
+	for _, a := range pending {
+		if a.Host == "golang:github.com/gorilla/mux" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("learning mode: expected pending approval for golang:github.com/gorilla/mux")
+	}
+}
+
+func TestProxy_LearningMode_RegistryBlob(t *testing.T) {
+	// Set up a mock registry backend.
+	backend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("blob data"))
+	}))
+	defer backend.Close()
+
+	p, _, _ := setupProxy(t)
+	p.ImageApprovals = approval.NewManager()
+	p.Registries = []config.RegistryConfig{
+		{Name: "test-registry", Hosts: []string{"registry.example.com"}},
+	}
+	p.LearningMode = true
+	// Use the test backend's TLS-accepting transport.
+	p.Transport = backend.Client().Transport
+
+	// Build a blob request as if it came through MITM.
+	blobReq, _ := http.NewRequest("GET", "https://registry.example.com:443/v2/myapp/blobs/sha256:abc123", nil)
+	blobReq.Host = "registry.example.com"
+
+	// Use net.Pipe to simulate the MITM'd client connection.
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+
+	reg := &p.Registries[0]
+
+	// Run the handler in a goroutine (it writes to serverConn).
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.handleRegistryTLSRequest(serverConn, blobReq, "registry.example.com", "10.0.0.1", nil, reg, time.Now())
+		serverConn.Close()
+	}()
+
+	// Read the response from the client side.
+	reader := bufio.NewReader(clientConn)
+	resp, err := http.ReadResponse(reader, blobReq)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	defer resp.Body.Close()
+
+	<-done
+
+	if resp.StatusCode == http.StatusForbidden {
+		t.Error("learning mode: blob request should not be denied (got 403)")
+	}
+
+	// Verify a pending image approval was created.
+	pending := p.ImageApprovals.ListPending()
+	found := false
+	for _, a := range pending {
+		if a.Host == "test-registry/myapp" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("learning mode: expected pending image approval for test-registry/myapp")
+	}
+}
+
+func TestProxy_LearningMode_RegistryBlob_DeniedWhenOff(t *testing.T) {
+	p, _, _ := setupProxy(t)
+	p.ImageApprovals = approval.NewManager()
+	p.Registries = []config.RegistryConfig{
+		{Name: "test-registry", Hosts: []string{"registry.example.com"}},
+	}
+	p.LearningMode = false // default-deny
+
+	blobReq, _ := http.NewRequest("GET", "https://registry.example.com:443/v2/myapp/blobs/sha256:abc123", nil)
+	blobReq.Host = "registry.example.com"
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+
+	reg := &p.Registries[0]
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.handleRegistryTLSRequest(serverConn, blobReq, "registry.example.com", "10.0.0.1", nil, reg, time.Now())
+		serverConn.Close()
+	}()
+
+	reader := bufio.NewReader(clientConn)
+	resp, err := http.ReadResponse(reader, blobReq)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	defer resp.Body.Close()
+
+	<-done
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("default-deny: blob request should be denied, got %d", resp.StatusCode)
+	}
+}
+
 // Alias for use in test file.
 var StatusApproved = approval.StatusApproved
