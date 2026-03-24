@@ -331,3 +331,25 @@ tr:hover td { background: var(--surface2); }
   background: rgba(99,102,241,0.15);
   color: var(--accent);
 }
+
+/* Checkbox column */
+th.cb-col, td.cb-col { width: 32px; padding: 10px 8px; }
+th.cb-col input, td.cb-col input { cursor: pointer; accent-color: var(--accent); width: 14px; height: 14px; }
+
+/* Bulk actions bar */
+.bulk-bar {
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: rgba(99,102,241,0.1);
+  border: 1px solid rgba(99,102,241,0.3);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.bulk-count {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  margin-right: 4px;
+}

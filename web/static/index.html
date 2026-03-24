@@ -73,9 +73,17 @@
           </select>
           <button class="btn btn-outline btn-sm" onclick="clearFilters('url')">Clear</button>
         </div>
+        <div id="bulk-bar-url" class="bulk-bar" style="display:none">
+          <span class="bulk-count"></span>
+          <button class="btn btn-success btn-sm" onclick="bulkAction('url','approve')">Approve</button>
+          <button class="btn btn-danger btn-sm" onclick="bulkAction('url','deny')">Deny</button>
+          <button class="btn btn-outline btn-sm" onclick="bulkAction('url','promote')">Promote Global</button>
+          <button class="btn btn-danger btn-sm" onclick="bulkAction('url','delete')">Delete</button>
+          <button class="btn btn-outline btn-sm" onclick="clearSelection('url')">Clear selection</button>
+        </div>
         <div class="card">
           <table>
-            <thead><tr><th>Host</th><th>Path Prefix</th><th>Category</th><th>Logging</th><th>Skill</th><th>Source IP</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead>
+            <thead><tr><th class="cb-col"><input type="checkbox" id="select-all-url" onchange="toggleSelectAll('url')"></th><th>Host</th><th>Path Prefix</th><th>Category</th><th>Logging</th><th>Skill</th><th>Source IP</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead>
             <tbody id="approvals-tbody">
               <tr><td colspan="9" class="empty-state">No URL rules</td></tr>
             </tbody>
@@ -107,9 +115,17 @@
           </select>
           <button class="btn btn-outline btn-sm" onclick="clearFilters('image')">Clear</button>
         </div>
+        <div id="bulk-bar-image" class="bulk-bar" style="display:none">
+          <span class="bulk-count"></span>
+          <button class="btn btn-success btn-sm" onclick="bulkAction('image','approve')">Approve</button>
+          <button class="btn btn-danger btn-sm" onclick="bulkAction('image','deny')">Deny</button>
+          <button class="btn btn-outline btn-sm" onclick="bulkAction('image','promote')">Promote Global</button>
+          <button class="btn btn-danger btn-sm" onclick="bulkAction('image','delete')">Delete</button>
+          <button class="btn btn-outline btn-sm" onclick="clearSelection('image')">Clear selection</button>
+        </div>
         <div class="card">
           <table>
-            <thead><tr><th>Repository</th><th>Category</th><th>Skill</th><th>Source IP</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead>
+            <thead><tr><th class="cb-col"><input type="checkbox" id="select-all-image" onchange="toggleSelectAll('image')"></th><th>Repository</th><th>Category</th><th>Skill</th><th>Source IP</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead>
             <tbody id="images-tbody">
               <tr><td colspan="7" class="empty-state">No image approval records</td></tr>
             </tbody>
@@ -144,9 +160,17 @@
           </select>
           <button class="btn btn-outline btn-sm" onclick="clearFilters('package')">Clear</button>
         </div>
+        <div id="bulk-bar-package" class="bulk-bar" style="display:none">
+          <span class="bulk-count"></span>
+          <button class="btn btn-success btn-sm" onclick="bulkAction('package','approve')">Approve</button>
+          <button class="btn btn-danger btn-sm" onclick="bulkAction('package','deny')">Deny</button>
+          <button class="btn btn-outline btn-sm" onclick="bulkAction('package','promote')">Promote Global</button>
+          <button class="btn btn-danger btn-sm" onclick="bulkAction('package','delete')">Delete</button>
+          <button class="btn btn-outline btn-sm" onclick="clearSelection('package')">Clear selection</button>
+        </div>
         <div class="card">
           <table>
-            <thead><tr><th>Package</th><th>Type</th><th>Category</th><th>Skill</th><th>Source IP</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead>
+            <thead><tr><th class="cb-col"><input type="checkbox" id="select-all-package" onchange="toggleSelectAll('package')"></th><th>Package</th><th>Type</th><th>Category</th><th>Skill</th><th>Source IP</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead>
             <tbody id="packages-tbody">
               <tr><td colspan="8" class="empty-state">No OS package approval records</td></tr>
             </tbody>
@@ -181,9 +205,17 @@
           </select>
           <button class="btn btn-outline btn-sm" onclick="clearFilters('library')">Clear</button>
         </div>
+        <div id="bulk-bar-library" class="bulk-bar" style="display:none">
+          <span class="bulk-count"></span>
+          <button class="btn btn-success btn-sm" onclick="bulkAction('library','approve')">Approve</button>
+          <button class="btn btn-danger btn-sm" onclick="bulkAction('library','deny')">Deny</button>
+          <button class="btn btn-outline btn-sm" onclick="bulkAction('library','promote')">Promote Global</button>
+          <button class="btn btn-danger btn-sm" onclick="bulkAction('library','delete')">Delete</button>
+          <button class="btn btn-outline btn-sm" onclick="clearSelection('library')">Clear selection</button>
+        </div>
         <div class="card">
           <table>
-            <thead><tr><th>Library</th><th>Type</th><th>Category</th><th>Skill</th><th>Source IP</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead>
+            <thead><tr><th class="cb-col"><input type="checkbox" id="select-all-library" onchange="toggleSelectAll('library')"></th><th>Library</th><th>Type</th><th>Category</th><th>Skill</th><th>Source IP</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead>
             <tbody id="libraries-tbody">
               <tr><td colspan="8" class="empty-state">No code library approval records</td></tr>
             </tbody>

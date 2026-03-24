@@ -21,6 +21,18 @@ let currentCredentials = [];
 let currentCategories = [];
 let currentLogs = [];
 
+// Selection state for bulk actions
+let selectedApprovals = new Set();
+let selectedImages = new Set();
+let selectedPackages = new Set();
+let selectedLibraries = new Set();
+
+// Currently filtered items (for select-all and bulk operations)
+let currentFilteredApprovals = [];
+let currentFilteredImages = [];
+let currentFilteredPackages = [];
+let currentFilteredLibraries = [];
+
 // --- Navigation ---
 function navigate(page) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -291,6 +303,140 @@ function clearFilters(prefix) {
   if (prefix === 'library') loadLibraries();
 }
 
+// --- Selection & Bulk Actions ---
+
+function approvalKey(a) {
+  return (a.host||'') + '|' + (a.skill_id||'') + '|' + (a.source_ip||'') + '|' + (a.path_prefix||'');
+}
+
+function imgKey(a) {
+  return (a.host||'') + '|' + (a.skill_id||'') + '|' + (a.source_ip||'');
+}
+
+function getSelectionSet(prefix) {
+  if (prefix === 'url') return selectedApprovals;
+  if (prefix === 'image') return selectedImages;
+  if (prefix === 'package') return selectedPackages;
+  return selectedLibraries;
+}
+
+function getCurrentFiltered(prefix) {
+  if (prefix === 'url') return currentFilteredApprovals;
+  if (prefix === 'image') return currentFilteredImages;
+  if (prefix === 'package') return currentFilteredPackages;
+  return currentFilteredLibraries;
+}
+
+function getKeyFn(prefix) {
+  return prefix === 'url' ? approvalKey : imgKey;
+}
+
+function toggleSelect(prefix, el) {
+  const key = el.getAttribute('data-key');
+  if (!key) return;
+  const set = getSelectionSet(prefix);
+  if (el.checked) set.add(key);
+  else set.delete(key);
+  updateBulkBar(prefix);
+}
+
+function toggleSelectAll(prefix) {
+  const allCb = document.getElementById('select-all-' + prefix);
+  if (!allCb) return;
+  const items = getCurrentFiltered(prefix);
+  const set = getSelectionSet(prefix);
+  const keyFn = getKeyFn(prefix);
+  if (allCb.checked) {
+    items.forEach(a => set.add(keyFn(a)));
+  } else {
+    items.forEach(a => set.delete(keyFn(a)));
+  }
+  const tbodyMap = { url: 'approvals-tbody', image: 'images-tbody', package: 'packages-tbody', library: 'libraries-tbody' };
+  const tbody = document.getElementById(tbodyMap[prefix]);
+  if (tbody) tbody.querySelectorAll('.row-cb').forEach(cb => { cb.checked = allCb.checked; });
+  updateBulkBar(prefix);
+}
+
+function updateBulkBar(prefix) {
+  const bar = document.getElementById('bulk-bar-' + prefix);
+  if (!bar) return;
+  const set = getSelectionSet(prefix);
+  const count = set.size;
+  bar.style.display = count > 0 ? 'flex' : 'none';
+  const countEl = bar.querySelector('.bulk-count');
+  if (countEl) countEl.textContent = count + ' item' + (count !== 1 ? 's' : '') + ' selected';
+  const allCb = document.getElementById('select-all-' + prefix);
+  const items = getCurrentFiltered(prefix);
+  if (allCb) {
+    if (items.length === 0) {
+      allCb.checked = false;
+      allCb.indeterminate = false;
+    } else {
+      const keyFn = getKeyFn(prefix);
+      const selectedInFiltered = items.filter(a => set.has(keyFn(a))).length;
+      allCb.checked = selectedInFiltered === items.length;
+      allCb.indeterminate = selectedInFiltered > 0 && selectedInFiltered < items.length;
+    }
+  }
+}
+
+function clearSelection(prefix) {
+  const set = getSelectionSet(prefix);
+  set.clear();
+  const allCb = document.getElementById('select-all-' + prefix);
+  if (allCb) { allCb.checked = false; allCb.indeterminate = false; }
+  const tbodyMap = { url: 'approvals-tbody', image: 'images-tbody', package: 'packages-tbody', library: 'libraries-tbody' };
+  const tbody = document.getElementById(tbodyMap[prefix]);
+  if (tbody) tbody.querySelectorAll('.row-cb').forEach(cb => { cb.checked = false; });
+  updateBulkBar(prefix);
+}
+
+async function bulkAction(prefix, action) {
+  const set = getSelectionSet(prefix);
+  if (set.size === 0) return;
+  const items = getCurrentFiltered(prefix);
+  const keyFn = getKeyFn(prefix);
+  const selectedItems = items.filter(a => set.has(keyFn(a)));
+  const apiDecide = { url: '/api/approvals/decide', image: '/api/images/decide', package: '/api/packages/decide', library: '/api/libraries/decide' }[prefix];
+  const apiDelete = { url: '/api/approvals', image: '/api/images', package: '/api/packages', library: '/api/libraries' }[prefix];
+  if (action === 'promote') {
+    const applicable = selectedItems.filter(a => a.source_ip && !a.skill_id);
+    if (applicable.length === 0) {
+      alert('No VM-specific items selected. Only items with a source IP and no skill can be promoted to global.');
+      return;
+    }
+    const skip = selectedItems.length - applicable.length;
+    const msg = skip > 0
+      ? `Promote ${applicable.length} VM-specific item(s) to global? (${skip} item(s) will be skipped)`
+      : `Promote ${applicable.length} item(s) to global?`;
+    if (!confirm(msg)) return;
+    try {
+      for (const a of applicable) {
+        const pp = prefix === 'url' ? (a.path_prefix || '') : '';
+        const useStatus = (a.status !== 'pending' && a.status !== 'pending_timeout') ? a.status : 'approved';
+        await api('POST', apiDecide, { host: a.host, skill_id: '', source_ip: '', path_prefix: pp, status: useStatus });
+        await api('DELETE', apiDelete, { host: a.host, skill_id: a.skill_id || '', source_ip: a.source_ip, path_prefix: pp });
+      }
+    } catch (e) { alert('Error: ' + e.message); return; }
+  } else {
+    const actionLabel = action === 'approve' ? 'Approve' : action === 'deny' ? 'Deny' : 'Delete';
+    if (!confirm(`${actionLabel} ${selectedItems.length} selected item(s)?`)) return;
+    try {
+      for (const a of selectedItems) {
+        const pp = prefix === 'url' ? (a.path_prefix || '') : '';
+        if (action === 'delete') {
+          await api('DELETE', apiDelete, { host: a.host, skill_id: a.skill_id || '', source_ip: a.source_ip || '', path_prefix: pp });
+        } else {
+          await api('POST', apiDecide, { host: a.host, skill_id: a.skill_id || '', source_ip: a.source_ip || '', path_prefix: pp, status: action === 'approve' ? 'approved' : 'denied' });
+        }
+      }
+    } catch (e) { alert('Error: ' + e.message); return; }
+  }
+  set.clear();
+  const activePage = document.querySelector('.page.active');
+  if (activePage) navigate(activePage.id.replace('page-', ''));
+}
+
 function formatCategory(category) {
   if (!category) return '<span class="badge-status" style="opacity:0.4">-</span>';
   return '<span class="category-badge">' + esc(category) + '</span>';
@@ -382,12 +528,16 @@ async function loadApprovals() {
     const filtered = currentApprovals.filter(a => matchesFilter(a, filter));
     const tbody = document.getElementById('approvals-tbody');
     tbody.innerHTML = '';
+    currentFilteredApprovals = filtered;
     if (filtered.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No URL rules</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No URL rules</td></tr>';
+      updateBulkBar('url');
       return;
     }
     filtered.sort((a, b) => a.host.localeCompare(b.host));
     filtered.forEach((a) => {
+      const key = approvalKey(a);
+      const cbChecked = selectedApprovals.has(key) ? 'checked' : '';
       const idx = currentApprovals.indexOf(a);
       const skillDisplay = formatSkillID(a.skill_id);
       const sourceDisplay = formatSourceIP(a.source_ip);
@@ -418,6 +568,7 @@ async function loadApprovals() {
         ? '<span class="badge-status" style="background:rgba(99,102,241,0.15);color:var(--accent)">Full</span>'
         : '<span class="badge-status" style="opacity:0.4">Normal</span>';
       tbody.innerHTML += `<tr>
+        <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('url',this)"></td>
         <td><strong>${esc(a.host)}</strong></td>
         <td>${pathDisplay}</td>
         <td>${categoryDisplay}</td>
@@ -429,6 +580,7 @@ async function loadApprovals() {
         <td>${actions}</td>
       </tr>`;
     });
+    updateBulkBar('url');
   } catch (e) {
     console.error('URL rules load error:', e);
   }
@@ -465,6 +617,7 @@ async function promoteToGlobal(host, sourceIP, pathPrefix, status) {
   if (!confirm(`Promote "${host}" from VM ${sourceIP} to a global rule?`)) return;
   try {
     await api('POST', '/api/approvals/decide', { host, skill_id: '', source_ip: '', path_prefix: pathPrefix, status });
+    await api('DELETE', '/api/approvals', { host, skill_id: '', source_ip: sourceIP, path_prefix: pathPrefix });
     const activePage = document.querySelector('.page.active');
     if (activePage) {
       const pageId = activePage.id.replace('page-', '');
@@ -595,12 +748,16 @@ async function loadImages() {
     const filtered = currentImages.filter(a => matchesFilter(a, filter));
     const tbody = document.getElementById('images-tbody');
     tbody.innerHTML = '';
+    currentFilteredImages = filtered;
     if (filtered.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No image approval records</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No image approval records</td></tr>';
+      updateBulkBar('image');
       return;
     }
     filtered.sort((a, b) => a.host.localeCompare(b.host));
     filtered.forEach((a) => {
+      const key = imgKey(a);
+      const cbChecked = selectedImages.has(key) ? 'checked' : '';
       const idx = currentImages.indexOf(a);
       const skillDisplay = formatSkillID(a.skill_id);
       const sourceDisplay = formatSourceIP(a.source_ip);
@@ -626,6 +783,7 @@ async function loadImages() {
            ${editBtn} ${deleteBtn}`;
       }
       tbody.innerHTML += `<tr>
+        <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('image',this)"></td>
         <td><strong>${esc(a.host)}</strong></td>
         <td>${categoryDisplay}</td>
         <td>${skillDisplay}</td>
@@ -635,6 +793,7 @@ async function loadImages() {
         <td>${actions}</td>
       </tr>`;
     });
+    updateBulkBar('image');
   } catch (e) {
     console.error('Images load error:', e);
   }
@@ -671,6 +830,7 @@ async function promoteImageToGlobal(host, sourceIP, status) {
   if (!confirm(`Promote "${host}" from VM ${sourceIP} to a global rule?`)) return;
   try {
     await api('POST', '/api/images/decide', { host, skill_id: '', source_ip: '', status });
+    await api('DELETE', '/api/images', { host, skill_id: '', source_ip: sourceIP });
     const activePage = document.querySelector('.page.active');
     if (activePage) {
       const pageId = activePage.id.replace('page-', '');
@@ -774,12 +934,16 @@ async function loadPackages() {
     const filtered = currentPackages.filter(a => matchesFilter(a, filter));
     const tbody = document.getElementById('packages-tbody');
     tbody.innerHTML = '';
+    currentFilteredPackages = filtered;
     if (filtered.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No OS package approval records</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No OS package approval records</td></tr>';
+      updateBulkBar('package');
       return;
     }
     filtered.sort((a, b) => getLibraryName(a.host).localeCompare(getLibraryName(b.host)));
     filtered.forEach((a) => {
+      const key = imgKey(a);
+      const cbChecked = selectedPackages.has(key) ? 'checked' : '';
       const idx = currentPackages.indexOf(a);
       const skillDisplay = formatSkillID(a.skill_id);
       const sourceDisplay = formatSourceIP(a.source_ip);
@@ -807,6 +971,7 @@ async function loadPackages() {
            ${editBtn} ${deleteBtn}`;
       }
       tbody.innerHTML += `<tr>
+        <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('package',this)"></td>
         <td><strong>${nameDisplay}</strong></td>
         <td>${typeDisplay}</td>
         <td>${categoryDisplay}</td>
@@ -817,6 +982,7 @@ async function loadPackages() {
         <td>${actions}</td>
       </tr>`;
     });
+    updateBulkBar('package');
   } catch (e) {
     console.error('Packages load error:', e);
   }
@@ -843,6 +1009,7 @@ async function promotePackageToGlobal(host, sourceIP, status) {
   if (!confirm(`Promote "${getLibraryName(host)}" from VM ${sourceIP} to a global rule?`)) return;
   try {
     await api('POST', '/api/packages/decide', { host, skill_id: '', source_ip: '', status });
+    await api('DELETE', '/api/packages', { host, skill_id: '', source_ip: sourceIP });
     const activePage = document.querySelector('.page.active');
     if (activePage) navigate(activePage.id.replace('page-', ''));
   } catch (e) { alert('Error: ' + e.message); }
@@ -942,12 +1109,16 @@ async function loadLibraries() {
     const filtered = currentLibraries.filter(a => matchesFilter(a, filter));
     const tbody = document.getElementById('libraries-tbody');
     tbody.innerHTML = '';
+    currentFilteredLibraries = filtered;
     if (filtered.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No code library approval records</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No code library approval records</td></tr>';
+      updateBulkBar('library');
       return;
     }
     filtered.sort((a, b) => getLibraryName(a.host).localeCompare(getLibraryName(b.host)));
     filtered.forEach((a) => {
+      const key = imgKey(a);
+      const cbChecked = selectedLibraries.has(key) ? 'checked' : '';
       const idx = currentLibraries.indexOf(a);
       const skillDisplay = formatSkillID(a.skill_id);
       const sourceDisplay = formatSourceIP(a.source_ip);
@@ -975,6 +1146,7 @@ async function loadLibraries() {
            ${editBtn} ${deleteBtn}`;
       }
       tbody.innerHTML += `<tr>
+        <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('library',this)"></td>
         <td><strong>${nameDisplay}</strong></td>
         <td>${typeDisplay}</td>
         <td>${categoryDisplay}</td>
@@ -985,6 +1157,7 @@ async function loadLibraries() {
         <td>${actions}</td>
       </tr>`;
     });
+    updateBulkBar('library');
   } catch (e) {
     console.error('Libraries load error:', e);
   }
@@ -1011,6 +1184,7 @@ async function promoteLibraryToGlobal(host, sourceIP, status) {
   if (!confirm(`Promote "${getLibraryName(host)}" from VM ${sourceIP} to a global rule?`)) return;
   try {
     await api('POST', '/api/libraries/decide', { host, skill_id: '', source_ip: '', status });
+    await api('DELETE', '/api/libraries', { host, skill_id: '', source_ip: sourceIP });
     const activePage = document.querySelector('.page.active');
     if (activePage) navigate(activePage.id.replace('page-', ''));
   } catch (e) { alert('Error: ' + e.message); }
