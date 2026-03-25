@@ -834,6 +834,7 @@ func (h *Handler) systemUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 	// Run upgrade in background since it will reboot.
 	go func() {
+		exec.Command("mount", "-o", "remount,rw", "/.snapshots").Run()
 		exec.Command("elemental", "upgrade", "--reboot", "--system", "oci:"+image).Run()
 	}()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "upgrade started"})
