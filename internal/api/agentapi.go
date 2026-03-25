@@ -32,6 +32,14 @@ func (h *AgentHandler) RegisterAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/policy", h.getPolicy)
 	mux.HandleFunc("GET /ca.crt", h.getCACert)
 
+	// Special endpoint to serve the Alpine apkovl tarball for netboot installations.
+	mux.HandleFunc("GET /boot/apkovl.tar.gz", func(w http.ResponseWriter, r *http.Request) {
+		data := h.NetbootManager.GenerateAlpineApkovl()
+		w.Header().Set("Content-Type", "application/gzip")
+		w.Header().Set("Content-Disposition", "attachment; filename=apkovl.tar.gz")
+		w.Write(data)
+	})
+
 	// Boot endpoints for PXE netboot.
 	mux.HandleFunc("GET /boot/ipxe", h.getIPXEScript)
 	mux.HandleFunc("GET /boot/preseed/", h.getPreseed)
