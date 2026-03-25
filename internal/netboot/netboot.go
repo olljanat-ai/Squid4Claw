@@ -3,6 +3,9 @@
 package netboot
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"log"
@@ -11,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/olljanat-ai/firewall4ai/internal/agent"
 )
@@ -23,8 +27,8 @@ type NetbootURLs struct {
 
 // Manager handles netboot file downloads and installer config generation.
 type Manager struct {
-	DataDir   string // e.g., /var/lib/firewall4ai
-	ServerIP  string // e.g., 10.255.255.1
+	DataDir  string // e.g., /var/lib/firewall4ai
+	ServerIP string // e.g., 10.255.255.1
 
 	mu sync.RWMutex
 }
@@ -131,8 +135,8 @@ func (m *Manager) GenerateIPXEScript(a *agent.Agent) string {
 
 	switch a.OS {
 	case agent.OSAlpine:
-		sb.WriteString(fmt.Sprintf("kernel %s alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v%s/main/ modloop=http://dl-cdn.alpinelinux.org/alpine/v%s/releases/x86_64/netboot/modloop-lts ip=dhcp autoinstall=http://%s/boot/autoinstall/%s\n",
-			kernelURL, a.OSVersion, a.OSVersion, m.ServerIP, a.ID))
+		sb.WriteString(fmt.Sprintf("kernel %s alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v%s/main/ modloop=http://dl-cdn.alpinelinux.org/alpine/v%s/releases/x86_64/netboot/modloop-lts ip=dhcp apkovl=http://%s/boot/apkovl.tar.gz myanswerfile=http://%s/boot/autoinstall/%s \n ",
+			kernelURL, a.OSVersion, a.OSVersion, m.ServerIP, m.ServerIP, a.ID))
 		sb.WriteString(fmt.Sprintf("initrd %s\n", initrdURL))
 
 	case agent.OSDebian:
@@ -265,16 +269,57 @@ func (m *Manager) GenerateAlpineAnswerFile(a *agent.Agent) string {
 	sb.WriteString("\n# Root password\n")
 	sb.WriteString("ROOTPASSOPTS=\"-a root\"\n")
 
-	// Extra packages.
-	if len(a.Packages) > 0 {
-		sb.WriteString("\n# Extra packages\n")
-		sb.WriteString("apk add --no-cache " + strings.Join(a.Packages, " ") + " \n")
-	} else {
-		sb.WriteString("\n# Extra packages\n")
-		sb.WriteString("apk add --no-cache ca-certificates\n")
-	}
-
 	return sb.String()
+}
+
+// GenerateAlpineApkovl creates a small overlay (apkovl.tar.gz) that automatically
+// runs setup-alpine with the per-agent answerfile on first netboot.
+func (m *Manager) GenerateAlpineApkovl() []byte {
+	script := `#!/bin/sh
+# Firewall4AI: Automatic Alpine installer (runs once via local.d on netboot)
+set -e
+
+echo "=== Firewall4AI Alpine Auto-Install starting ==="
+
+# Extract answerfile URL from kernel cmdline (we pass it as myanswerfile=...)
+ANSWER_URL=""
+for p in $(cat /proc/cmdline); do
+    case "$p" in
+        myanswerfile=*) ANSWER_URL="${p#myanswerfile=}" ;;
+    esac
+done
+
+if [ -z "$ANSWER_URL" ]; then
+    echo "ERROR: myanswerfile= parameter missing"
+    exit 1
+fi
+
+echo "→ Downloading answerfile from ${ANSWER_URL}"
+wget -qO /tmp/answerfile "${ANSWER_URL}"
+
+echo "→ Running unattended setup-alpine..."
+setup-alpine -f /tmp/answerfile
+
+echo "→ Installation finished – rebooting into installed system"
+reboot -f
+`
+
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+
+	header := &tar.Header{
+		Name:    "etc/local.d/autoinstall.start",
+		Mode:    0755,
+		Size:    int64(len(script)),
+		ModTime: time.Now(),
+	}
+	tw.WriteHeader(header)
+	tw.Write([]byte(script))
+
+	tw.Close()
+	gw.Close()
+	return buf.Bytes()
 }
 
 // GeneratePostInstallScript generates a post-installation script.
