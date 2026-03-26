@@ -132,8 +132,8 @@ func TestManagerCRUD(t *testing.T) {
 		t.Errorf("Name = %q, want %q", got.Name, "Test DB")
 	}
 
-	// GetByAPIPath
-	got, ok = m.GetByAPIPath("testdb")
+	// GetByAPIPath (global)
+	got, ok = m.GetByAPIPath("testdb", "10.0.0.1")
 	if !ok {
 		t.Fatal("expected to find by API path testdb")
 	}
@@ -142,7 +142,7 @@ func TestManagerCRUD(t *testing.T) {
 	}
 
 	// GetByAPIPath not found
-	_, ok = m.GetByAPIPath("nonexistent")
+	_, ok = m.GetByAPIPath("nonexistent", "10.0.0.1")
 	if ok {
 		t.Error("expected not to find nonexistent API path")
 	}
@@ -179,9 +179,61 @@ func TestManagerGetByAPIPathInactive(t *testing.T) {
 		APIPath: "mydb",
 		Active:  false,
 	})
-	_, ok := m.GetByAPIPath("mydb")
+	_, ok := m.GetByAPIPath("mydb", "10.0.0.1")
 	if ok {
 		t.Error("expected inactive database to not be returned by GetByAPIPath")
+	}
+}
+
+func TestManagerGetByAPIPathSourceIP(t *testing.T) {
+	m := NewManager()
+	// VM-specific database
+	m.Add(DatabaseConfig{
+		ID:       "db-1",
+		APIPath:  "mydb",
+		SourceIP: "10.255.255.10",
+		Active:   true,
+	})
+
+	// Should not match different source IP
+	_, ok := m.GetByAPIPath("mydb", "10.255.255.20")
+	if ok {
+		t.Error("expected VM-specific database to not match different source IP")
+	}
+
+	// Should match correct source IP
+	got, ok := m.GetByAPIPath("mydb", "10.255.255.10")
+	if !ok {
+		t.Fatal("expected to find VM-specific database for matching IP")
+	}
+	if got.ID != "db-1" {
+		t.Errorf("ID = %q, want %q", got.ID, "db-1")
+	}
+
+	// Global database (empty SourceIP) should match any IP
+	m.Add(DatabaseConfig{
+		ID:      "db-2",
+		APIPath: "globaldb",
+		Active:  true,
+	})
+	_, ok = m.GetByAPIPath("globaldb", "10.255.255.99")
+	if !ok {
+		t.Error("expected global database to match any source IP")
+	}
+}
+
+func TestAPIPathExists(t *testing.T) {
+	m := NewManager()
+	m.Add(DatabaseConfig{ID: "db-1", APIPath: "mydb", Active: true})
+
+	if !m.APIPathExists("mydb", "") {
+		t.Error("expected APIPathExists to return true")
+	}
+	if m.APIPathExists("mydb", "db-1") {
+		t.Error("expected APIPathExists to return false when excluding own ID")
+	}
+	if m.APIPathExists("other", "") {
+		t.Error("expected APIPathExists to return false for non-existent path")
 	}
 }
 

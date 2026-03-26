@@ -1474,7 +1474,7 @@ async function loadCredentials() {
       tbody.innerHTML += `<tr>
         <td><strong>${esc(c.name)}</strong></td>
         <td>${esc(c.host_pattern)}</td>
-        <td>${formatSkillID(c.skill_id)}</td>
+        <td>${c.source_ip ? esc(c.source_ip) : '<span class="muted">global</span>'}</td>
         <td><span class="badge-status approved">${esc(c.injection_type)}</span></td>
         <td><span class="badge-status ${c.active ? 'approved' : 'denied'}">${c.active ? 'active' : 'inactive'}</span></td>
         <td>
@@ -1501,7 +1501,7 @@ async function loadDatabases() {
     const tbody = document.getElementById('databases-tbody');
     tbody.innerHTML = '';
     if (currentDatabases.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No database connections configured.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No database connections configured.</td></tr>';
       return;
     }
     currentDatabases.forEach((db, idx) => {
@@ -1513,6 +1513,7 @@ async function loadDatabases() {
         <td><span class="badge-status approved">${esc(driverLabel)}</span></td>
         <td>${esc(hostPort)}</td>
         <td>${esc(db.db_name)}</td>
+        <td>${db.source_ip ? esc(db.source_ip) : '<span class="muted">global</span>'}</td>
         <td><span class="badge-status ${db.active ? 'approved' : 'denied'}">${db.active ? 'active' : 'inactive'}</span></td>
         <td>
           <button class="btn btn-outline btn-sm" onclick="showEditDB(${idx})">Edit</button>
@@ -1539,6 +1540,7 @@ function showCreateDB() {
   document.getElementById('db-username').value = '';
   document.getElementById('db-password').value = '';
   document.getElementById('db-password').placeholder = 'password';
+  document.getElementById('db-source-ip').value = '';
   document.getElementById('db-active-group').style.display = 'none';
   document.getElementById('modal-db').classList.add('active');
 }
@@ -1559,6 +1561,7 @@ function showEditDB(idx) {
   document.getElementById('db-username').value = db.username;
   document.getElementById('db-password').value = '';
   document.getElementById('db-password').placeholder = 'leave empty to keep current value';
+  document.getElementById('db-source-ip').value = db.source_ip || '';
   document.getElementById('db-active-group').style.display = 'block';
   document.getElementById('db-active').value = db.active ? 'true' : 'false';
   document.getElementById('modal-db').classList.add('active');
@@ -1584,6 +1587,7 @@ async function submitDatabase() {
     db_name: document.getElementById('db-dbname').value.trim(),
     username: document.getElementById('db-username').value.trim(),
     password: document.getElementById('db-password').value,
+    source_ip: document.getElementById('db-source-ip').value.trim(),
   };
   if (!db.name || !db.api_path || !db.host || !db.db_name) {
     alert('Name, API path, host, and database name are required');
@@ -1626,7 +1630,7 @@ function showCreateCred() {
   document.getElementById('modal-cred-submit').textContent = 'Add';
   document.getElementById('cred-name').value = '';
   document.getElementById('cred-host').value = '';
-  document.getElementById('cred-skill').value = '';
+  document.getElementById('cred-source-ip').value = '';
   document.getElementById('cred-type').value = 'header';
   document.getElementById('cred-header-name').value = '';
   document.getElementById('cred-header-value').value = '';
@@ -1652,7 +1656,7 @@ function showEditCred(idx) {
   document.getElementById('modal-cred-submit').textContent = 'Save';
   document.getElementById('cred-name').value = c.name;
   document.getElementById('cred-host').value = c.host_pattern;
-  document.getElementById('cred-skill').value = c.skill_id || '';
+  document.getElementById('cred-source-ip').value = c.source_ip || '';
   document.getElementById('cred-type').value = c.injection_type;
   // Non-secret fields
   document.getElementById('cred-header-name').value = c.header_name || '';
@@ -1700,7 +1704,7 @@ async function createCredential() {
   const cred = {
     name: document.getElementById('cred-name').value.trim(),
     host_pattern: document.getElementById('cred-host').value.trim(),
-    skill_id: document.getElementById('cred-skill').value.trim(),
+    source_ip: document.getElementById('cred-source-ip').value.trim(),
     injection_type: type,
     active: true,
   };
@@ -1732,7 +1736,7 @@ async function updateCredential() {
     id: editingCredID,
     name: document.getElementById('cred-name').value.trim(),
     host_pattern: document.getElementById('cred-host').value.trim(),
-    skill_id: document.getElementById('cred-skill').value.trim(),
+    source_ip: document.getElementById('cred-source-ip').value.trim(),
     injection_type: type,
     active: document.getElementById('cred-active').value === 'true',
   };

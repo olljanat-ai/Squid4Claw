@@ -65,7 +65,7 @@ func TestManager_InjectHeader(t *testing.T) {
 	})
 
 	req, _ := http.NewRequest("GET", "http://api.example.com/data", nil)
-	m.InjectForRequest(req, "any-skill")
+	m.InjectForRequest(req, "10.0.0.1")
 
 	if got := req.Header.Get("X-API-Key"); got != "secret123" {
 		t.Errorf("expected X-API-Key=secret123, got %q", got)
@@ -83,7 +83,7 @@ func TestManager_InjectBearer(t *testing.T) {
 	})
 
 	req, _ := http.NewRequest("GET", "http://api.example.com/data", nil)
-	m.InjectForRequest(req, "any-skill")
+	m.InjectForRequest(req, "10.0.0.1")
 
 	if got := req.Header.Get("Authorization"); got != "Bearer mytoken" {
 		t.Errorf("expected Bearer mytoken, got %q", got)
@@ -102,7 +102,7 @@ func TestManager_InjectBasicAuth(t *testing.T) {
 	})
 
 	req, _ := http.NewRequest("GET", "http://api.example.com/data", nil)
-	m.InjectForRequest(req, "any-skill")
+	m.InjectForRequest(req, "10.0.0.1")
 
 	user, pass, ok := req.BasicAuth()
 	if !ok || user != "user" || pass != "pass" {
@@ -122,36 +122,51 @@ func TestManager_InjectQueryParam(t *testing.T) {
 	})
 
 	req, _ := http.NewRequest("GET", "http://api.example.com/data", nil)
-	m.InjectForRequest(req, "any-skill")
+	m.InjectForRequest(req, "10.0.0.1")
 
 	if got := req.URL.Query().Get("api_key"); got != "qp-secret" {
 		t.Errorf("expected api_key=qp-secret, got %q", got)
 	}
 }
 
-func TestManager_InjectSkillFiltering(t *testing.T) {
+func TestManager_SourceIPFiltering(t *testing.T) {
 	m := NewManager()
 	m.Add(Credential{
 		ID:            "c1",
 		HostPattern:   "api.example.com",
-		SkillID:       "skill-a",
+		SourceIP:      "10.255.255.10",
 		InjectionType: InjectBearer,
 		Token:         "secret",
 		Active:        true,
 	})
 
-	// Should not inject for different skill.
+	// Should not inject for different source IP.
 	req, _ := http.NewRequest("GET", "http://api.example.com/data", nil)
-	m.InjectForRequest(req, "skill-b")
+	m.InjectForRequest(req, "10.255.255.20")
 	if req.Header.Get("Authorization") != "" {
-		t.Error("should not inject for non-matching skill")
+		t.Error("should not inject for non-matching source IP")
 	}
 
-	// Should inject for matching skill.
+	// Should inject for matching source IP.
 	req, _ = http.NewRequest("GET", "http://api.example.com/data", nil)
-	m.InjectForRequest(req, "skill-a")
+	m.InjectForRequest(req, "10.255.255.10")
 	if req.Header.Get("Authorization") != "Bearer secret" {
-		t.Error("should inject for matching skill")
+		t.Error("should inject for matching source IP")
+	}
+
+	// Global credential (empty SourceIP) should apply to any source.
+	m.Add(Credential{
+		ID:            "c2",
+		HostPattern:   "api.example.com",
+		InjectionType: InjectHeader,
+		HeaderName:    "X-Global",
+		HeaderValue:   "yes",
+		Active:        true,
+	})
+	req, _ = http.NewRequest("GET", "http://api.example.com/data", nil)
+	m.InjectForRequest(req, "10.255.255.99")
+	if req.Header.Get("X-Global") != "yes" {
+		t.Error("global credential should apply to any source IP")
 	}
 }
 
@@ -166,7 +181,7 @@ func TestManager_InactiveCredential(t *testing.T) {
 	})
 
 	req, _ := http.NewRequest("GET", "http://api.example.com/data", nil)
-	m.InjectForRequest(req, "any")
+	m.InjectForRequest(req, "10.0.0.1")
 	if req.Header.Get("Authorization") != "" {
 		t.Error("inactive credential should not be injected")
 	}

@@ -505,7 +505,7 @@ func (h *Handler) createDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Check for duplicate API path.
-	if existing, ok := h.DatabaseManager.GetByAPIPath(db.APIPath); ok && existing.ID != db.ID {
+	if h.DatabaseManager.APIPathExists(db.APIPath, db.ID) {
 		http.Error(w, "api_path already in use", http.StatusConflict)
 		return
 	}
@@ -531,7 +531,7 @@ func (h *Handler) updateDatabase(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Check for duplicate API path.
-	if existing, ok := h.DatabaseManager.GetByAPIPath(db.APIPath); ok && existing.ID != db.ID {
+	if h.DatabaseManager.APIPathExists(db.APIPath, db.ID) {
 		http.Error(w, "api_path already in use", http.StatusConflict)
 		return
 	}

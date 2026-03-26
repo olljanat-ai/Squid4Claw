@@ -30,6 +30,7 @@ type DatabaseConfig struct {
 	DBName   string     `json:"db_name"`   // Database name
 	Username string     `json:"username"`  // Database username
 	Password string     `json:"password"`  // Database password (masked in API responses)
+	SourceIP string     `json:"source_ip"` // empty means global (all VMs), set means VM-specific
 	Active   bool       `json:"active"`    // Enable/disable this connection
 }
 
@@ -142,16 +143,34 @@ func (m *Manager) Get(id string) (*DatabaseConfig, bool) {
 }
 
 // GetByAPIPath returns a database config by its API path.
-func (m *Manager) GetByAPIPath(apiPath string) (*DatabaseConfig, bool) {
+// sourceIP is used to filter: global configs (SourceIP="") match any source,
+// VM-specific configs only match when the source IP matches.
+func (m *Manager) GetByAPIPath(apiPath string, sourceIP string) (*DatabaseConfig, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, c := range m.configs {
-		if c.APIPath == apiPath && c.Active {
-			cp := *c
-			return &cp, true
+		if c.APIPath != apiPath || !c.Active {
+			continue
 		}
+		if c.SourceIP != "" && c.SourceIP != sourceIP {
+			continue
+		}
+		cp := *c
+		return &cp, true
 	}
 	return nil, false
+}
+
+// APIPathExists checks if an API path is already in use by another config.
+func (m *Manager) APIPathExists(apiPath string, excludeID string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, c := range m.configs {
+		if c.APIPath == apiPath && c.ID != excludeID {
+			return true
+		}
+	}
+	return false
 }
 
 // Delete removes a database config and closes its connection.

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -204,8 +205,14 @@ func (h *AgentHandler) queryDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract source IP for VM-specific filtering.
+	sourceIP := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		sourceIP = h
+	}
+
 	// Look up the database config by API path.
-	cfg, ok := h.DatabaseManager.GetByAPIPath(dbName)
+	cfg, ok := h.DatabaseManager.GetByAPIPath(dbName, sourceIP)
 	if !ok {
 		http.Error(w, "Firewall4AI: database not found or not active: "+dbName, http.StatusNotFound)
 		return

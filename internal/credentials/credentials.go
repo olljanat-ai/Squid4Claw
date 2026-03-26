@@ -22,7 +22,7 @@ type Credential struct {
 	ID            string        `json:"id"`
 	Name          string        `json:"name"`
 	HostPattern   string        `json:"host_pattern"` // exact host or wildcard like *.example.com
-	SkillID       string        `json:"skill_id"`     // empty means applies to all skills
+	SourceIP      string        `json:"source_ip"`    // empty means global (all VMs), set means VM-specific
 	InjectionType InjectionType `json:"injection_type"`
 	HeaderName    string        `json:"header_name,omitempty"`  // for header type
 	HeaderValue   string        `json:"header_value,omitempty"` // for header type
@@ -105,10 +105,11 @@ func matchHost(pattern, host string) bool {
 }
  
 // InjectForRequest applies matching credentials to an HTTP request.
-func (m *Manager) InjectForRequest(req *http.Request, skillID string) {
+// sourceIP is the client VM's IP address for VM-specific credential matching.
+func (m *Manager) InjectForRequest(req *http.Request, sourceIP string) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
- 
+
 	host := req.Host
 	if host == "" {
 		host = req.URL.Host
@@ -117,12 +118,14 @@ func (m *Manager) InjectForRequest(req *http.Request, skillID string) {
 	if idx := strings.LastIndex(host, ":"); idx > 0 {
 		host = host[:idx]
 	}
- 
+
 	for _, c := range m.creds {
 		if !c.Active {
 			continue
 		}
-		if c.SkillID != "" && c.SkillID != skillID {
+		// Global credentials (SourceIP="") apply to all VMs.
+		// VM-specific credentials only apply when source IP matches.
+		if c.SourceIP != "" && c.SourceIP != sourceIP {
 			continue
 		}
 		if !matchHost(c.HostPattern, host) {
