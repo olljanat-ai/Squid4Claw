@@ -23,24 +23,24 @@ const (
 type Status string
 
 const (
-	StatusNew        Status = "new"        // Configured, waiting for image
-	StatusReady      Status = "ready"      // Image available, waiting for VM to PXE boot
-	StatusDeploying  Status = "deploying"  // VM is PXE booting and deploying image
-	StatusInstalled  Status = "installed"  // Deployment complete, VM booted from disk
-	StatusError      Status = "error"      // Error during deployment
+	StatusNew       Status = "new"       // Configured, waiting for image
+	StatusReady     Status = "ready"     // Image available, waiting for VM to PXE boot
+	StatusDeploying Status = "deploying" // VM is PXE booting and deploying image
+	StatusInstalled Status = "installed" // Deployment complete, VM booted from disk
+	StatusError     Status = "error"     // Error during deployment
 )
 
 // Agent represents an AI agent VM configuration.
 type Agent struct {
 	ID           string    `json:"id"`
-	MAC          string    `json:"mac"`            // MAC address (identifier), e.g., "aa:bb:cc:dd:ee:ff"
-	Hostname     string    `json:"hostname"`        // Agent hostname
-	IP           string    `json:"ip"`              // Assigned IP address
-	ImageID      string    `json:"image_id"`        // References a DiskImage
-	ImageVersion int       `json:"image_version"`   // Which image version to deploy (0 = latest ready)
-	DiskDevice   string    `json:"disk_device"`     // e.g., "/dev/vda" or "/dev/sda"
+	MAC          string    `json:"mac"`           // MAC address (identifier), e.g., "aa:bb:cc:dd:ee:ff"
+	Hostname     string    `json:"hostname"`      // Agent hostname
+	IP           string    `json:"ip"`            // Assigned IP address
+	ImageID      string    `json:"image_id"`      // References a DiskImage
+	ImageVersion int       `json:"image_version"` // Which image version to deploy (0 = latest ready)
+	DiskDevice   string    `json:"disk_device"`   // e.g., "/dev/vda" or "/dev/sda"
 	Status       Status    `json:"status"`
-	StatusMsg    string    `json:"status_msg"`      // Additional status detail (e.g., error message)
+	StatusMsg    string    `json:"status_msg"` // Additional status detail (e.g., error message)
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -207,7 +207,7 @@ func (m *Manager) Count() int {
 func DefaultOSVersion(os OSType) string {
 	switch os {
 	case OSAlpine:
-		return "3.21"
+		return "3.23"
 	case OSDebian:
 		return "13"
 	case OSUbuntu:

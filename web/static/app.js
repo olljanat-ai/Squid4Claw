@@ -2214,7 +2214,7 @@ async function removeCategory(name) {
 
 // --- Disk Images & Agents ---
 
-const osVersionDefaults = { alpine: '3.21', debian: '13', ubuntu: '24.04' };
+const osVersionDefaults = { alpine: '3.23', debian: '13', ubuntu: '24.04' };
 const osLabels = { alpine: 'Alpine Linux', debian: 'Debian', ubuntu: 'Ubuntu' };
 
 let currentDiskImages = [];

@@ -21,7 +21,7 @@ import (
 
 const (
 	// Alpine version used for the deploy boot system.
-	deployAlpineVersion = "3.21"
+	deployAlpineVersion = "3.23"
 )
 
 // Manager handles the deploy boot system and iPXE script generation.
