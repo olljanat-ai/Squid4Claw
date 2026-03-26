@@ -10,7 +10,7 @@ func TestAddAndGet(t *testing.T) {
 		ID:       "a1",
 		MAC:      "AA:BB:CC:DD:EE:01",
 		Hostname: "agent1",
-		OS:       OSAlpine,
+		ImageID:  "img1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -26,13 +26,16 @@ func TestAddAndGet(t *testing.T) {
 	if a.Status != StatusNew {
 		t.Fatalf("expected status 'new', got %s", a.Status)
 	}
+	if a.ImageID != "img1" {
+		t.Fatalf("expected image_id 'img1', got %s", a.ImageID)
+	}
 }
 
 func TestDuplicateMAC(t *testing.T) {
 	m := NewManager()
-	m.Add(Agent{ID: "a1", MAC: "aa:bb:cc:dd:ee:01", Hostname: "agent1", OS: OSAlpine})
+	m.Add(Agent{ID: "a1", MAC: "aa:bb:cc:dd:ee:01", Hostname: "agent1", ImageID: "img1"})
 
-	err := m.Add(Agent{ID: "a2", MAC: "AA:BB:CC:DD:EE:01", Hostname: "agent2", OS: OSDebian})
+	err := m.Add(Agent{ID: "a2", MAC: "AA:BB:CC:DD:EE:01", Hostname: "agent2", ImageID: "img1"})
 	if err == nil {
 		t.Fatal("expected error for duplicate MAC")
 	}
@@ -40,9 +43,9 @@ func TestDuplicateMAC(t *testing.T) {
 
 func TestDuplicateID(t *testing.T) {
 	m := NewManager()
-	m.Add(Agent{ID: "a1", MAC: "aa:bb:cc:dd:ee:01", Hostname: "agent1", OS: OSAlpine})
+	m.Add(Agent{ID: "a1", MAC: "aa:bb:cc:dd:ee:01", Hostname: "agent1", ImageID: "img1"})
 
-	err := m.Add(Agent{ID: "a1", MAC: "aa:bb:cc:dd:ee:02", Hostname: "agent2", OS: OSDebian})
+	err := m.Add(Agent{ID: "a1", MAC: "aa:bb:cc:dd:ee:02", Hostname: "agent2", ImageID: "img1"})
 	if err == nil {
 		t.Fatal("expected error for duplicate ID")
 	}
@@ -50,7 +53,7 @@ func TestDuplicateID(t *testing.T) {
 
 func TestGetByMAC(t *testing.T) {
 	m := NewManager()
-	m.Add(Agent{ID: "a1", MAC: "aa:bb:cc:dd:ee:01", Hostname: "agent1", OS: OSAlpine})
+	m.Add(Agent{ID: "a1", MAC: "aa:bb:cc:dd:ee:01", Hostname: "agent1", ImageID: "img1"})
 
 	a, ok := m.GetByMAC("AA:BB:CC:DD:EE:01")
 	if !ok {
@@ -63,7 +66,7 @@ func TestGetByMAC(t *testing.T) {
 
 func TestDelete(t *testing.T) {
 	m := NewManager()
-	m.Add(Agent{ID: "a1", MAC: "aa:bb:cc:dd:ee:01", Hostname: "agent1", OS: OSAlpine})
+	m.Add(Agent{ID: "a1", MAC: "aa:bb:cc:dd:ee:01", Hostname: "agent1", ImageID: "img1"})
 
 	err := m.Delete("a1")
 	if err != nil {
@@ -83,13 +86,13 @@ func TestDelete(t *testing.T) {
 
 func TestUpdate(t *testing.T) {
 	m := NewManager()
-	m.Add(Agent{ID: "a1", MAC: "aa:bb:cc:dd:ee:01", Hostname: "agent1", OS: OSAlpine})
+	m.Add(Agent{ID: "a1", MAC: "aa:bb:cc:dd:ee:01", Hostname: "agent1", ImageID: "img1"})
 
 	err := m.Update(Agent{
 		ID:       "a1",
 		MAC:      "aa:bb:cc:dd:ee:02",
 		Hostname: "agent1-updated",
-		OS:       OSDebian,
+		ImageID:  "img2",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -101,6 +104,9 @@ func TestUpdate(t *testing.T) {
 	}
 	if a.MAC != "aa:bb:cc:dd:ee:02" {
 		t.Fatalf("MAC not updated: %s", a.MAC)
+	}
+	if a.ImageID != "img2" {
+		t.Fatalf("ImageID not updated: %s", a.ImageID)
 	}
 
 	// Old MAC should not resolve.
@@ -118,8 +124,8 @@ func TestUpdate(t *testing.T) {
 
 func TestExportLoad(t *testing.T) {
 	m := NewManager()
-	m.Add(Agent{ID: "a1", MAC: "aa:bb:cc:dd:ee:01", Hostname: "agent1", OS: OSAlpine})
-	m.Add(Agent{ID: "a2", MAC: "aa:bb:cc:dd:ee:02", Hostname: "agent2", OS: OSDebian})
+	m.Add(Agent{ID: "a1", MAC: "aa:bb:cc:dd:ee:01", Hostname: "agent1", ImageID: "img1"})
+	m.Add(Agent{ID: "a2", MAC: "aa:bb:cc:dd:ee:02", Hostname: "agent2", ImageID: "img2"})
 
 	exported := m.ExportAgents()
 	if len(exported) != 2 {
@@ -136,14 +142,14 @@ func TestExportLoad(t *testing.T) {
 
 func TestSetStatus(t *testing.T) {
 	m := NewManager()
-	m.Add(Agent{ID: "a1", MAC: "aa:bb:cc:dd:ee:01", Hostname: "agent1", OS: OSAlpine})
+	m.Add(Agent{ID: "a1", MAC: "aa:bb:cc:dd:ee:01", Hostname: "agent1", ImageID: "img1"})
 
-	m.SetStatus("a1", StatusReady, "files downloaded")
+	m.SetStatus("a1", StatusReady, "image available")
 	a, _ := m.Get("a1")
 	if a.Status != StatusReady {
 		t.Fatalf("expected ready, got %s", a.Status)
 	}
-	if a.StatusMsg != "files downloaded" {
+	if a.StatusMsg != "image available" {
 		t.Fatalf("expected msg, got %s", a.StatusMsg)
 	}
 }
@@ -158,8 +164,8 @@ func TestValidateMAC(t *testing.T) {
 }
 
 func TestDefaultOSVersion(t *testing.T) {
-	if v := DefaultOSVersion(OSAlpine); v != "3.23" {
-		t.Fatalf("expected 3.23, got %s", v)
+	if v := DefaultOSVersion(OSAlpine); v != "3.21" {
+		t.Fatalf("expected 3.21, got %s", v)
 	}
 	if v := DefaultOSVersion(OSDebian); v != "13" {
 		t.Fatalf("expected 13, got %s", v)
