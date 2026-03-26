@@ -1,5 +1,5 @@
-// Package agent manages AI agent VM configurations including OS type,
-// network boot settings, and extra packages.
+// Package agent manages AI agent VM configurations including disk image
+// references and network boot settings.
 package agent
 
 import (
@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// OSType represents the operating system for an agent VM.
+// OSType represents the operating system for an agent VM or disk image.
 type OSType string
 
 const (
@@ -19,32 +19,30 @@ const (
 	OSUbuntu OSType = "ubuntu"
 )
 
-// Status represents the installation status of an agent VM.
+// Status represents the deployment status of an agent VM.
 type Status string
 
 const (
-	StatusNew         Status = "new"         // Configured, waiting for first boot
-	StatusDownloading Status = "downloading" // Downloading netboot files
-	StatusReady       Status = "ready"       // Netboot files ready, waiting for VM to PXE boot
-	StatusInstalling  Status = "installing"  // VM is PXE booting / installing
-	StatusInstalled   Status = "installed"   // Installation complete
-	StatusError       Status = "error"       // Error during download or setup
+	StatusNew        Status = "new"        // Configured, waiting for image
+	StatusReady      Status = "ready"      // Image available, waiting for VM to PXE boot
+	StatusDeploying  Status = "deploying"  // VM is PXE booting and deploying image
+	StatusInstalled  Status = "installed"  // Deployment complete, VM booted from disk
+	StatusError      Status = "error"      // Error during deployment
 )
 
 // Agent represents an AI agent VM configuration.
 type Agent struct {
-	ID          string   `json:"id"`
-	MAC         string   `json:"mac"`          // MAC address (identifier), e.g., "aa:bb:cc:dd:ee:ff"
-	Hostname    string   `json:"hostname"`      // Agent hostname
-	IP          string   `json:"ip"`            // Assigned IP address
-	OS          OSType   `json:"os"`            // "alpine", "debian", "ubuntu"
-	OSVersion   string   `json:"os_version"`    // e.g., "3.23", "13", "24.04"
-	Packages    []string `json:"packages"`      // Extra packages to install
-	DiskDevice  string   `json:"disk_device"`   // e.g., "/dev/vda" or "/dev/sda"
-	Status      Status   `json:"status"`
-	StatusMsg   string   `json:"status_msg"`    // Additional status detail (e.g., error message)
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	MAC          string    `json:"mac"`            // MAC address (identifier), e.g., "aa:bb:cc:dd:ee:ff"
+	Hostname     string    `json:"hostname"`        // Agent hostname
+	IP           string    `json:"ip"`              // Assigned IP address
+	ImageID      string    `json:"image_id"`        // References a DiskImage
+	ImageVersion int       `json:"image_version"`   // Which image version to deploy (0 = latest ready)
+	DiskDevice   string    `json:"disk_device"`     // e.g., "/dev/vda" or "/dev/sda"
+	Status       Status    `json:"status"`
+	StatusMsg    string    `json:"status_msg"`      // Additional status detail (e.g., error message)
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // Manager manages agent configurations.
@@ -209,7 +207,7 @@ func (m *Manager) Count() int {
 func DefaultOSVersion(os OSType) string {
 	switch os {
 	case OSAlpine:
-		return "3.23"
+		return "3.21"
 	case OSDebian:
 		return "13"
 	case OSUbuntu:

@@ -14,7 +14,6 @@ func (h *Handler) RegisterAgentMgmtRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/agents", h.createAgent)
 	mux.HandleFunc("PUT /api/agents", h.updateAgent)
 	mux.HandleFunc("DELETE /api/agents", h.deleteAgent)
-	mux.HandleFunc("POST /api/agents/download", h.downloadAgentBootFiles)
 }
 
 func (h *Handler) listAgents(w http.ResponseWriter, r *http.Request) {
@@ -26,13 +25,12 @@ func (h *Handler) listAgents(w http.ResponseWriter, r *http.Request) {
 }
 
 type createAgentRequest struct {
-	MAC        string         `json:"mac"`
-	Hostname   string         `json:"hostname"`
-	IP         string         `json:"ip"`
-	OS         agent.OSType   `json:"os"`
-	OSVersion  string         `json:"os_version"`
-	Packages   []string       `json:"packages"`
-	DiskDevice string         `json:"disk_device"`
+	MAC          string `json:"mac"`
+	Hostname     string `json:"hostname"`
+	IP           string `json:"ip"`
+	ImageID      string `json:"image_id"`
+	ImageVersion int    `json:"image_version"`
+	DiskDevice   string `json:"disk_device"`
 }
 
 func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
@@ -54,32 +52,32 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "hostname is required", http.StatusBadRequest)
 		return
 	}
-	if req.OS == "" {
-		http.Error(w, "os is required (alpine, debian, ubuntu)", http.StatusBadRequest)
-		return
-	}
-	if req.OS != agent.OSAlpine && req.OS != agent.OSDebian && req.OS != agent.OSUbuntu {
-		http.Error(w, "os must be alpine, debian, or ubuntu", http.StatusBadRequest)
+	if req.ImageID == "" {
+		http.Error(w, "image_id is required", http.StatusBadRequest)
 		return
 	}
 
-	if req.OSVersion == "" {
-		req.OSVersion = agent.DefaultOSVersion(req.OS)
+	// Verify image exists.
+	if h.ImageManager != nil {
+		if _, ok := h.ImageManager.Get(req.ImageID); !ok {
+			http.Error(w, fmt.Sprintf("disk image %q not found", req.ImageID), http.StatusBadRequest)
+			return
+		}
 	}
+
 	if req.DiskDevice == "" {
 		req.DiskDevice = agent.DefaultDiskDevice()
 	}
 
 	a := agent.Agent{
-		ID:         auth.GenerateGUID(),
-		MAC:        req.MAC,
-		Hostname:   req.Hostname,
-		IP:         req.IP,
-		OS:         req.OS,
-		OSVersion:  req.OSVersion,
-		Packages:   req.Packages,
-		DiskDevice: req.DiskDevice,
-		Status:     agent.StatusNew,
+		ID:           auth.GenerateGUID(),
+		MAC:          req.MAC,
+		Hostname:     req.Hostname,
+		IP:           req.IP,
+		ImageID:      req.ImageID,
+		ImageVersion: req.ImageVersion,
+		DiskDevice:   req.DiskDevice,
+		Status:       agent.StatusNew,
 	}
 
 	if err := h.AgentManager.Add(a); err != nil {
@@ -93,25 +91,18 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.save()
-
-	// Start downloading boot files in background.
-	if h.DownloadBootFiles != nil {
-		go h.DownloadBootFiles(&a)
-	}
-
 	writeJSON(w, http.StatusCreated, a)
 }
 
 func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID         string         `json:"id"`
-		MAC        string         `json:"mac"`
-		Hostname   string         `json:"hostname"`
-		IP         string         `json:"ip"`
-		OS         agent.OSType   `json:"os"`
-		OSVersion  string         `json:"os_version"`
-		Packages   []string       `json:"packages"`
-		DiskDevice string         `json:"disk_device"`
+		ID           string `json:"id"`
+		MAC          string `json:"mac"`
+		Hostname     string `json:"hostname"`
+		IP           string `json:"ip"`
+		ImageID      string `json:"image_id"`
+		ImageVersion int    `json:"image_version"`
+		DiskDevice   string `json:"disk_device"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -142,14 +133,18 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 	if req.IP != "" {
 		existing.IP = req.IP
 	}
-	if req.OS != "" {
-		existing.OS = req.OS
+	if req.ImageID != "" {
+		// Verify image exists.
+		if h.ImageManager != nil {
+			if _, ok := h.ImageManager.Get(req.ImageID); !ok {
+				http.Error(w, fmt.Sprintf("disk image %q not found", req.ImageID), http.StatusBadRequest)
+				return
+			}
+		}
+		existing.ImageID = req.ImageID
 	}
-	if req.OSVersion != "" {
-		existing.OSVersion = req.OSVersion
-	}
-	if req.Packages != nil {
-		existing.Packages = req.Packages
+	if req.ImageVersion != 0 {
+		existing.ImageVersion = req.ImageVersion
 	}
 	if req.DiskDevice != "" {
 		existing.DiskDevice = req.DiskDevice
@@ -192,30 +187,4 @@ func (h *Handler) deleteAgent(w http.ResponseWriter, r *http.Request) {
 
 	h.save()
 	writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
-}
-
-func (h *Handler) downloadAgentBootFiles(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ID string `json:"id"`
-	}
-	if err := readJSON(r, &req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-	if req.ID == "" {
-		http.Error(w, "id is required", http.StatusBadRequest)
-		return
-	}
-
-	a, ok := h.AgentManager.Get(req.ID)
-	if !ok {
-		http.Error(w, fmt.Sprintf("agent %q not found", req.ID), http.StatusNotFound)
-		return
-	}
-
-	if h.DownloadBootFiles != nil {
-		go h.DownloadBootFiles(a)
-	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"result": "download started"})
 }
