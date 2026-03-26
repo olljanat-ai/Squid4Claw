@@ -418,7 +418,7 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Inject credentials.
-	p.Credentials.InjectForRequest(r, sid)
+	p.Credentials.InjectForRequest(r, sourceIP)
 
 	// Forward the request.
 	r.RequestURI = ""
@@ -675,7 +675,7 @@ func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, 
 	req.RequestURI = ""
 
 	// Inject credentials for HTTPS requests.
-	p.Credentials.InjectForRequest(req, sid)
+	p.Credentials.InjectForRequest(req, sourceIP)
 
 	resp, err := p.Transport.RoundTrip(req)
 	if err != nil {
@@ -907,7 +907,7 @@ func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Reque
 	req.RequestURI = ""
 
 	// Inject credentials.
-	p.Credentials.InjectForRequest(req, sid)
+	p.Credentials.InjectForRequest(req, sourceIP)
 
 	resp, err := p.Transport.RoundTrip(req)
 	if err != nil {

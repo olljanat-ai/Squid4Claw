@@ -268,7 +268,7 @@
         </div>
         <div class="card">
           <table>
-            <thead><tr><th>Name</th><th>Host Pattern</th><th>Skill</th><th>Type</th><th>Status</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th>Host Pattern</th><th>Source IP</th><th>Type</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody id="credentials-tbody">
               <tr><td colspan="6" class="empty-state">No credentials configured.</td></tr>
             </tbody>
@@ -280,9 +280,9 @@
         </div>
         <div class="card">
           <table>
-            <thead><tr><th>Name</th><th>API Path</th><th>Driver</th><th>Host</th><th>Database</th><th>Status</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th>API Path</th><th>Driver</th><th>Host</th><th>Database</th><th>Source IP</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody id="databases-tbody">
-              <tr><td colspan="7" class="empty-state">No database connections configured.</td></tr>
+              <tr><td colspan="8" class="empty-state">No database connections configured.</td></tr>
             </tbody>
           </table>
         </div>
@@ -536,8 +536,8 @@
         <input type="text" id="cred-host" placeholder="e.g., api.github.com or *.example.com">
       </div>
       <div class="form-group">
-        <label>Skill ID (leave empty for all skills)</label>
-        <input type="text" id="cred-skill" placeholder="optional">
+        <label>Source IP (leave empty for global / all VMs)</label>
+        <input type="text" id="cred-source-ip" placeholder="e.g., 10.255.255.10">
       </div>
       <div class="form-group">
         <label>Injection Type</label>
@@ -641,6 +641,10 @@
       <div class="form-group">
         <label id="db-password-label">Password</label>
         <input type="password" id="db-password" placeholder="password">
+      </div>
+      <div class="form-group">
+        <label>Source IP (leave empty for global / all VMs)</label>
+        <input type="text" id="db-source-ip" placeholder="e.g., 10.255.255.10">
       </div>
       <div class="form-group" id="db-active-group" style="display:none">
         <label>Status</label>
