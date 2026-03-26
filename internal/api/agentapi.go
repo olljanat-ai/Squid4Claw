@@ -13,6 +13,7 @@ import (
 	"github.com/olljanat-ai/firewall4ai/internal/approval"
 	"github.com/olljanat-ai/firewall4ai/internal/config"
 	"github.com/olljanat-ai/firewall4ai/internal/database"
+	"github.com/olljanat-ai/firewall4ai/internal/image"
 	"github.com/olljanat-ai/firewall4ai/internal/library"
 	"github.com/olljanat-ai/firewall4ai/internal/netboot"
 )
@@ -28,6 +29,7 @@ type AgentHandler struct {
 	CACertPEM        []byte // PEM-encoded CA certificate
 	AgentManager     *agent.Manager
 	NetbootManager   *netboot.Manager
+	ImageManager     *image.Manager
 	DatabaseManager  *database.Manager
 }
 
@@ -36,20 +38,20 @@ func (h *AgentHandler) RegisterAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/policy", h.getPolicy)
 	mux.HandleFunc("GET /ca.crt", h.getCACert)
 
-	// Special endpoint to serve the Alpine apkovl tarball for netboot installations.
-	mux.HandleFunc("GET /boot/apkovl.tar.gz", func(w http.ResponseWriter, r *http.Request) {
-		data := h.NetbootManager.GenerateAlpineApkovl()
+	// Deploy boot endpoints.
+	mux.HandleFunc("GET /boot/deploy/apkovl.tar.gz", func(w http.ResponseWriter, r *http.Request) {
+		data := h.NetbootManager.GenerateDeployApkovl()
 		w.Header().Set("Content-Type", "application/gzip")
 		w.Header().Set("Content-Disposition", "attachment; filename=apkovl.tar.gz")
 		w.Write(data)
 	})
-
-	// Boot endpoints for PXE netboot.
 	mux.HandleFunc("GET /boot/ipxe", h.getIPXEScript)
-	mux.HandleFunc("GET /boot/preseed/", h.getPreseed)
-	mux.HandleFunc("GET /boot/autoinstall/", h.getAutoinstall)
-	mux.HandleFunc("GET /boot/postinstall/", h.getPostInstall)
-	mux.HandleFunc("GET /boot/", h.serveBootFile)
+	mux.HandleFunc("GET /boot/deploy-info/", h.getDeployInfo)
+	mux.HandleFunc("GET /boot/status/", h.setBootStatus)
+	mux.HandleFunc("GET /boot/deploy/", h.serveDeployFile)
+
+	// Image file serving.
+	mux.HandleFunc("GET /images/", h.serveImageFile)
 
 	// Database query endpoint.
 	mux.HandleFunc("POST /v1/db/", h.queryDatabase)
@@ -185,7 +187,6 @@ func (h *AgentHandler) getCACert(w http.ResponseWriter, r *http.Request) {
 }
 
 // queryDatabase handles POST /v1/db/{name}/query requests from agents.
-// Agents send a SQL query and receive results as JSON.
 func (h *AgentHandler) queryDatabase(w http.ResponseWriter, r *http.Request) {
 	if h.DatabaseManager == nil {
 		http.Error(w, "Firewall4AI: database query feature not configured", http.StatusServiceUnavailable)
@@ -211,14 +212,12 @@ func (h *AgentHandler) queryDatabase(w http.ResponseWriter, r *http.Request) {
 		sourceIP = h
 	}
 
-	// Look up the database config by API path.
 	cfg, ok := h.DatabaseManager.GetByAPIPath(dbName, sourceIP)
 	if !ok {
 		http.Error(w, "Firewall4AI: database not found or not active: "+dbName, http.StatusNotFound)
 		return
 	}
 
-	// Parse the query request.
 	var req struct {
 		Query string        `json:"query"`
 		Args  []interface{} `json:"args"`
@@ -234,7 +233,6 @@ func (h *AgentHandler) queryDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Execute the query.
 	result := h.DatabaseManager.Query(cfg.ID, req.Query, req.Args)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -249,11 +247,12 @@ func (h *AgentHandler) index(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "Firewall4AI Agent API")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Endpoints:")
-	fmt.Fprintln(w, "  GET  /v1/policy               - Get firewall policy (allowed/disallowed languages, packages, URLs)")
-	fmt.Fprintln(w, "  POST /v1/db/{name}/query       - Execute SQL query on a configured database")
-	fmt.Fprintln(w, "  GET  /ca.crt                   - Download CA certificate for HTTPS inspection")
-	fmt.Fprintln(w, "  GET  /boot/ipxe?mac=XX         - iPXE boot script for agent")
-	fmt.Fprintln(w, "  GET  /boot/{os}/{ver}/...       - Boot files (kernel, initrd)")
+	fmt.Fprintln(w, "  GET  /v1/policy               - Get firewall policy")
+	fmt.Fprintln(w, "  POST /v1/db/{name}/query       - Execute SQL query")
+	fmt.Fprintln(w, "  GET  /ca.crt                   - Download CA certificate")
+	fmt.Fprintln(w, "  GET  /boot/ipxe?mac=XX         - iPXE boot script for deploy")
+	fmt.Fprintln(w, "  GET  /boot/deploy/...           - Deploy boot files")
+	fmt.Fprintln(w, "  GET  /images/{id}/{ver}/...     - Image files")
 }
 
 // --- Boot endpoints ---
@@ -279,23 +278,23 @@ func (h *AgentHandler) getIPXEScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Mark agent as installing.
-	h.AgentManager.SetStatus(a.ID, agent.StatusInstalling, "PXE boot in progress")
+	// Mark agent as deploying.
+	h.AgentManager.SetStatus(a.ID, agent.StatusDeploying, "PXE boot in progress")
 
-	script := h.NetbootManager.GenerateIPXEScript(a)
+	script := h.NetbootManager.GenerateDeployIPXEScript(a.ID)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write([]byte(script))
 }
 
-// getPreseed serves the Debian/Ubuntu preseed file for an agent.
-func (h *AgentHandler) getPreseed(w http.ResponseWriter, r *http.Request) {
-	if h.AgentManager == nil || h.NetbootManager == nil {
-		http.Error(w, "netboot not configured", http.StatusServiceUnavailable)
+// getDeployInfo returns deployment information for an agent.
+// Path: /boot/deploy-info/{agentID}
+func (h *AgentHandler) getDeployInfo(w http.ResponseWriter, r *http.Request) {
+	if h.AgentManager == nil || h.ImageManager == nil {
+		http.Error(w, "not configured", http.StatusServiceUnavailable)
 		return
 	}
 
-	// Path: /boot/preseed/{agentID}
-	agentID := strings.TrimPrefix(r.URL.Path, "/boot/preseed/")
+	agentID := strings.TrimPrefix(r.URL.Path, "/boot/deploy-info/")
 	if agentID == "" {
 		http.Error(w, "agent ID required", http.StatusBadRequest)
 		return
@@ -307,89 +306,85 @@ func (h *AgentHandler) getPreseed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	preseed := h.NetbootManager.GeneratePreseed(a)
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write([]byte(preseed))
-}
-
-// getAutoinstall serves the Alpine answer file for an agent.
-func (h *AgentHandler) getAutoinstall(w http.ResponseWriter, r *http.Request) {
-	if h.AgentManager == nil || h.NetbootManager == nil {
-		http.Error(w, "netboot not configured", http.StatusServiceUnavailable)
+	img, ok := h.ImageManager.Get(a.ImageID)
+	if !ok {
+		http.Error(w, "image not found for agent", http.StatusNotFound)
 		return
 	}
 
-	// Path: /boot/autoinstall/{agentID}
-	agentID := strings.TrimPrefix(r.URL.Path, "/boot/autoinstall/")
+	// Determine which version to deploy.
+	ver := a.ImageVersion
+	if ver == 0 {
+		ver = img.LatestReadyVersion()
+	}
+	if ver == 0 {
+		http.Error(w, "no ready image version available", http.StatusNotFound)
+		return
+	}
+
+	disk := a.DiskDevice
+	if disk == "" {
+		disk = agent.DefaultDiskDevice()
+	}
+
+	imageURL := fmt.Sprintf("http://%s/images/%s/%d/rootfs.tar.gz",
+		h.NetbootManager.ServerIP, a.ImageID, ver)
+
+	// Return simple key=value format (easy to parse in shell).
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	fmt.Fprintf(w, "disk=%s\n", disk)
+	fmt.Fprintf(w, "image_url=%s\n", imageURL)
+	fmt.Fprintf(w, "hostname=%s\n", a.Hostname)
+	fmt.Fprintf(w, "agent_id=%s\n", a.ID)
+}
+
+// setBootStatus handles status updates from the deploy script.
+// Path: /boot/status/{agentID}?status=deploying|installed|error&msg=...
+func (h *AgentHandler) setBootStatus(w http.ResponseWriter, r *http.Request) {
+	if h.AgentManager == nil {
+		http.Error(w, "not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	agentID := strings.TrimPrefix(r.URL.Path, "/boot/status/")
 	if agentID == "" {
 		http.Error(w, "agent ID required", http.StatusBadRequest)
 		return
 	}
 
-	a, ok := h.AgentManager.Get(agentID)
-	if !ok {
-		http.Error(w, "agent not found", http.StatusNotFound)
+	status := r.URL.Query().Get("status")
+	msg := r.URL.Query().Get("msg")
+
+	switch status {
+	case "deploying":
+		h.AgentManager.SetStatus(agentID, agent.StatusDeploying, "deploying image to disk")
+	case "installed":
+		h.AgentManager.SetStatus(agentID, agent.StatusInstalled, "deployment complete")
+	case "error":
+		h.AgentManager.SetStatus(agentID, agent.StatusError, msg)
+	default:
+		http.Error(w, "invalid status", http.StatusBadRequest)
 		return
 	}
 
-	answer := h.NetbootManager.GenerateAlpineAnswerFile(a)
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write([]byte(answer))
+	w.WriteHeader(http.StatusOK)
 }
 
-// getPostInstall serves the post-installation script for an agent.
-func (h *AgentHandler) getPostInstall(w http.ResponseWriter, r *http.Request) {
-	if h.AgentManager == nil || h.NetbootManager == nil {
-		http.Error(w, "netboot not configured", http.StatusServiceUnavailable)
-		return
-	}
-
-	agentID := strings.TrimPrefix(r.URL.Path, "/boot/postinstall/")
-	if agentID == "" {
-		http.Error(w, "agent ID required", http.StatusBadRequest)
-		return
-	}
-
-	a, ok := h.AgentManager.Get(agentID)
-	if !ok {
-		http.Error(w, "agent not found", http.StatusNotFound)
-		return
-	}
-
-	script := h.NetbootManager.GeneratePostInstallScript(a)
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write([]byte(script))
-}
-
-// serveBootFile serves kernel/initrd files from the netboot directory.
-// Path: /boot/{os}/{version}/{file}
-func (h *AgentHandler) serveBootFile(w http.ResponseWriter, r *http.Request) {
+// serveDeployFile serves deploy boot files (kernel, initrd).
+// Path: /boot/deploy/{file}
+func (h *AgentHandler) serveDeployFile(w http.ResponseWriter, r *http.Request) {
 	if h.NetbootManager == nil {
 		http.Error(w, "netboot not configured", http.StatusServiceUnavailable)
 		return
 	}
 
-	// Parse path: /boot/{os}/{version}/{file}
-	path := strings.TrimPrefix(r.URL.Path, "/boot/")
-	parts := strings.SplitN(path, "/", 3)
-	if len(parts) != 3 {
-		http.Error(w, "invalid boot path", http.StatusBadRequest)
+	file := strings.TrimPrefix(r.URL.Path, "/boot/deploy/")
+	if file == "" || strings.Contains(file, "..") || strings.Contains(file, "/") {
+		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
 
-	osType := parts[0]
-	version := parts[1]
-	file := parts[2]
-
-	// Validate components to prevent path traversal.
-	for _, part := range parts {
-		if strings.Contains(part, "..") || strings.Contains(part, "/") {
-			http.Error(w, "invalid path", http.StatusBadRequest)
-			return
-		}
-	}
-
-	filePath := filepath.Join(h.NetbootManager.OSDir(agent.OSType(osType), version), file)
+	filePath := filepath.Join(h.NetbootManager.DeployDir(), file)
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		http.Error(w, "file not found", http.StatusNotFound)
@@ -398,4 +393,46 @@ func (h *AgentHandler) serveBootFile(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Write(data)
+}
+
+// serveImageFile serves image rootfs files.
+// Path: /images/{imageID}/{version}/rootfs.tar.gz
+func (h *AgentHandler) serveImageFile(w http.ResponseWriter, r *http.Request) {
+	if h.ImageManager == nil {
+		http.Error(w, "not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Parse: /images/{id}/{version}/{file}
+	path := strings.TrimPrefix(r.URL.Path, "/images/")
+	parts := strings.SplitN(path, "/", 3)
+	if len(parts) != 3 {
+		http.Error(w, "invalid image path", http.StatusBadRequest)
+		return
+	}
+
+	for _, part := range parts {
+		if strings.Contains(part, "..") {
+			http.Error(w, "invalid path", http.StatusBadRequest)
+			return
+		}
+	}
+
+	filePath := filepath.Join(h.ImageManager.ImagesDir(), parts[0], parts[1], parts[2])
+	f, err := os.Open(filePath)
+	if err != nil {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		http.Error(w, "file error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", stat.Size()))
+	http.ServeContent(w, r, parts[2], stat.ModTime(), f)
 }

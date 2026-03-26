@@ -18,6 +18,7 @@ import (
 	"github.com/olljanat-ai/firewall4ai/internal/config"
 	"github.com/olljanat-ai/firewall4ai/internal/credentials"
 	"github.com/olljanat-ai/firewall4ai/internal/database"
+	"github.com/olljanat-ai/firewall4ai/internal/image"
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 )
 
@@ -39,11 +40,14 @@ type Handler struct {
 	// Database management.
 	DatabaseManager   *database.Manager
 
+	// Image management.
+	ImageManager      *image.Manager
+	BuildImage        func(img *image.DiskImage, version int) // called to build an image version
+
 	// Agent management.
 	AgentManager      *agent.Manager
 	OnAgentChange     func(a *agent.Agent) // called when agent is created/updated
 	OnAgentDelete     func(a *agent.Agent) // called when agent is deleted
-	DownloadBootFiles func(a *agent.Agent) // called to download boot files
 
 	catMu      sync.RWMutex
 	categories []string

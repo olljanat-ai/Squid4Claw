@@ -25,6 +25,7 @@ import (
 	"github.com/olljanat-ai/firewall4ai/internal/database"
 	"github.com/olljanat-ai/firewall4ai/internal/dhcp"
 	"github.com/olljanat-ai/firewall4ai/internal/dns"
+	"github.com/olljanat-ai/firewall4ai/internal/image"
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 	"github.com/olljanat-ai/firewall4ai/internal/netboot"
 	"github.com/olljanat-ai/firewall4ai/internal/proxy"
@@ -49,6 +50,7 @@ type storeData struct {
 	DisabledLanguages []string                 `json:"disabled_languages"`
 	DisabledDistros   []string                 `json:"disabled_distros"`
 	Databases         []database.DatabaseConfig `json:"databases"`
+	DiskImages        []image.DiskImage        `json:"disk_images"`
 	Agents            []agent.Agent            `json:"agents"`
 	DHCPLeases        []dhcp.Lease             `json:"dhcp_leases"`
 }
@@ -97,11 +99,14 @@ func main() {
 	serverIP := net.ParseIP("10.255.255.1")
 	internalIface := "eth1"
 
-	// Initialize netboot manager.
+	// Initialize netboot manager (deploy boot system).
 	netbootMgr := netboot.NewManager(cfg.DataDir, serverIP.String())
 	if err := netbootMgr.EnsureTFTPDir(); err != nil {
 		log.Printf("Warning: could not create TFTP directory: %v", err)
 	}
+
+	// Initialize image manager.
+	imageMgr := image.NewManager(cfg.DataDir)
 
 	// Initialize DHCP server.
 	dhcpServer := dhcp.NewServer(
@@ -129,6 +134,7 @@ func main() {
 	libraryApprovals.LoadApprovals(state.LibraryApprovals)
 	creds.LoadCredentials(state.Creds)
 	dbMgr.LoadConfigs(state.Databases)
+	imageMgr.LoadImages(state.DiskImages)
 	agentMgr.LoadAgents(state.Agents)
 	dhcpServer.LoadLeases(state.DHCPLeases)
 
@@ -157,12 +163,12 @@ func main() {
 
 	// DHCP PXE provider: returns boot info for registered agents.
 	dhcpServer.PXEProvider = func(mac string, clientArch uint16, isIPXE bool) *dhcp.PXEInfo {
-		a, ok := agentMgr.GetByMAC(mac)
+		_, ok := agentMgr.GetByMAC(mac)
 		if !ok {
 			return nil // Not a registered agent, no PXE.
 		}
-		if !netbootMgr.HasBootFiles(a.OS, a.OSVersion) {
-			return nil // Boot files not downloaded yet.
+		if !netbootMgr.HasDeployFiles() {
+			return nil // Deploy boot files not downloaded yet.
 		}
 		info := &dhcp.PXEInfo{
 			TFTPServer: serverIP.String(),
@@ -170,7 +176,6 @@ func main() {
 		}
 		// Choose bootfile based on client architecture.
 		if isIPXE {
-			// iPXE client: provide HTTP boot script URL.
 			info.Bootfile = info.IPXEScript
 		} else if clientArch == dhcp.ArchEFIx86_64 || clientArch == dhcp.ArchEFIBC || clientArch == dhcp.ArchEFIx86_64v {
 			info.Bootfile = "ipxe.efi"
@@ -187,7 +192,7 @@ func main() {
 		})
 	}
 
-	// Setup API handler early so we can load categories into it.
+	// Setup API handler.
 	apiHandler := &api.Handler{
 		Skills:           skills,
 		Approvals:        approvals,
@@ -196,6 +201,7 @@ func main() {
 		LibraryApprovals: libraryApprovals,
 		Credentials:      creds,
 		DatabaseManager:  dbMgr,
+		ImageManager:     imageMgr,
 		Logger:           logger,
 		Version:          Version,
 		AgentManager:     agentMgr,
@@ -215,17 +221,27 @@ func main() {
 			dnsServer.RemoveHost(a.Hostname)
 		}
 	}
-	apiHandler.DownloadBootFiles = func(a *agent.Agent) {
-		agentMgr.SetStatus(a.ID, agent.StatusDownloading, "downloading boot files")
-		if err := netbootMgr.DownloadBootFiles(a); err != nil {
-			log.Printf("Failed to download boot files for agent %s: %v", a.ID, err)
-			agentMgr.SetStatus(a.ID, agent.StatusError, err.Error())
-			return
-		}
-		agentMgr.SetStatus(a.ID, agent.StatusReady, "boot files ready")
-		// Save state after download.
+
+	// Image build callback.
+	apiHandler.BuildImage = func(img *image.DiskImage, version int) {
+		imageMgr.SetVersionStatus(img.ID, version, image.BuildStatusBuilding, "building rootfs")
 		dataStore.Update(func(d *storeData) {
-			d.Agents = agentMgr.ExportAgents()
+			d.DiskImages = imageMgr.ExportImages()
+		})
+
+		if err := imageMgr.BuildImage(img, version, serverIP.String()); err != nil {
+			log.Printf("Failed to build image %s v%d: %v", img.Name, version, err)
+			imageMgr.SetVersionStatus(img.ID, version, image.BuildStatusError, err.Error())
+		} else {
+			imageMgr.SetVersionStatus(img.ID, version, image.BuildStatusReady, "")
+			// Download deploy boot files if not already cached.
+			if err := netbootMgr.EnsureDeployFiles(); err != nil {
+				log.Printf("Warning: could not download deploy boot files: %v", err)
+			}
+		}
+
+		dataStore.Update(func(d *storeData) {
+			d.DiskImages = imageMgr.ExportImages()
 		})
 	}
 
@@ -244,6 +260,7 @@ func main() {
 			d.LearningMode = cfg.LearningMode
 			d.DisabledLanguages = cfg.DisabledLanguages
 			d.DisabledDistros = cfg.DisabledDistros
+			d.DiskImages = imageMgr.ExportImages()
 			d.Agents = agentMgr.ExportAgents()
 			d.DHCPLeases = dhcpServer.ExportLeases()
 		})
@@ -297,6 +314,7 @@ func main() {
 	adminMux := http.NewServeMux()
 	apiHandler.RegisterRoutes(adminMux)
 	apiHandler.RegisterAgentMgmtRoutes(adminMux)
+	apiHandler.RegisterImageMgmtRoutes(adminMux)
 
 	// Serve CA certificate for download.
 	adminMux.HandleFunc("GET /ca.crt", func(w http.ResponseWriter, r *http.Request) {
@@ -337,13 +355,14 @@ func main() {
 		DatabaseManager:  dbMgr,
 		AgentManager:     agentMgr,
 		NetbootManager:   netbootMgr,
+		ImageManager:     imageMgr,
 	}
 	agentHandler.RegisterAgentRoutes(agentAPIMux)
 	agentAPIServer := &http.Server{
 		Addr:         cfg.AgentAPIAddr,
 		Handler:      agentAPIMux,
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Minute, // Longer timeout for boot file downloads.
+		WriteTimeout: 10 * time.Minute, // Longer timeout for image downloads.
 	}
 
 	// Start DHCP server.
@@ -388,7 +407,6 @@ func main() {
 	// Start admin server.
 	go func() {
 		log.Printf("Admin UI listening on https://localhost%s", cfg.AdminAddr)
-		// Always use TLS for admin - either user-provided or auto-generated.
 		if err := adminServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Admin server error: %v", err)
 		}
@@ -398,12 +416,11 @@ func main() {
 	go func() {
 		log.Printf("Agent API listening on http://%s", cfg.AgentAPIAddr)
 		if err := agentAPIServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			// Non-fatal: agent API may fail to bind if eth1 is not available.
 			log.Printf("Agent API server error (non-fatal): %v", err)
 		}
 	}()
 
-	log.Printf("Agents configured: %d", agentMgr.Count())
+	log.Printf("Disk images: %d, Agents: %d", imageMgr.Count(), agentMgr.Count())
 
 	// Graceful shutdown.
 	sigCh := make(chan os.Signal, 1)
@@ -427,9 +444,7 @@ func main() {
 	log.Println("Stopped.")
 }
 
-// adminTLS returns a TLS config for the admin server. If the user provided
-// cert/key files, those are used. Otherwise a self-signed certificate is
-// auto-generated.
+// adminTLS returns a TLS config for the admin server.
 func adminTLS(cfg config.Config, ca *certgen.CA) (*tls.Config, error) {
 	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
 		cert, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
@@ -443,7 +458,6 @@ func adminTLS(cfg config.Config, ca *certgen.CA) (*tls.Config, error) {
 		}, nil
 	}
 
-	// Load or generate a persistent self-signed cert for admin UI.
 	cert, err := certgen.LoadOrGenerateAdminCert(cfg.DataDir)
 	if err != nil {
 		return nil, fmt.Errorf("load/generate admin cert: %w", err)
