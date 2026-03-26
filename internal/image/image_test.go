@@ -12,7 +12,7 @@ func TestAddAndGet(t *testing.T) {
 		ID:        "img1",
 		Name:      "Alpine Dev",
 		OS:        agent.OSAlpine,
-		OSVersion: "3.21",
+		OSVersion: "3.23",
 		Packages:  []string{"curl", "vim"},
 	})
 	if err != nil {
@@ -46,7 +46,7 @@ func TestDuplicateID(t *testing.T) {
 
 func TestUpdate(t *testing.T) {
 	m := NewManager(t.TempDir())
-	m.Add(DiskImage{ID: "img1", Name: "Test", OS: agent.OSAlpine, OSVersion: "3.21"})
+	m.Add(DiskImage{ID: "img1", Name: "Test", OS: agent.OSAlpine, OSVersion: "3.23"})
 
 	err := m.Update(DiskImage{
 		ID:        "img1",

@@ -28,7 +28,7 @@ type ImageVersion struct {
 	Version   int         `json:"version"`
 	Status    BuildStatus `json:"status"`
 	StatusMsg string      `json:"status_msg"`
-	Size      int64       `json:"size"`     // rootfs tarball size in bytes
+	Size      int64       `json:"size"` // rootfs tarball size in bytes
 	BuiltAt   time.Time   `json:"built_at"`
 }
 
@@ -37,9 +37,9 @@ type DiskImage struct {
 	ID        string         `json:"id"`
 	Name      string         `json:"name"`
 	OS        agent.OSType   `json:"os"`         // alpine, debian, ubuntu
-	OSVersion string         `json:"os_version"`  // e.g., "3.21", "13"
-	Packages  []string       `json:"packages"`    // packages to install in rootfs
-	Scripts   []string       `json:"scripts"`     // custom shell script steps to run during build
+	OSVersion string         `json:"os_version"` // e.g., "3.23", "13"
+	Packages  []string       `json:"packages"`   // packages to install in rootfs
+	Scripts   []string       `json:"scripts"`    // custom shell script steps to run during build
 	Versions  []ImageVersion `json:"versions"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
