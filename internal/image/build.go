@@ -97,9 +97,12 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string) error
 	}()
 
 	// Install base packages + kernel + bootloader.
+	// Install both linux-virt (optimized for VMs, used for disk boot) and
+	// linux-lts (broader hardware support, used for PXE boot). The virt kernel
+	// lacks drivers for some legacy devices (e.g., Hyper-V Gen1 legacy NIC).
 	log.Printf("Image build [%s v%s]: installing packages", img.Name, img.OSVersion)
 
-	basePkgs := []string{"linux-virt", "syslinux", "e2fsprogs", "openrc", "alpine-base", "ca-certificates"}
+	basePkgs := []string{"linux-virt", "linux-lts", "syslinux", "e2fsprogs", "openrc", "alpine-base", "ca-certificates"}
 	allPkgs := append(basePkgs, img.Packages...)
 
 	if err := runChroot(rootfsDir, "apk", append([]string{"update"})...); err != nil {
@@ -112,21 +115,22 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string) error
 	// Reconfigure mkinitfs to include network feature for PXE boot support.
 	// This must be done AFTER apk add, because installing the mkinitfs package
 	// overwrites mkinitfs.conf with its default (which lacks "network").
-	// Then regenerate the initrd so it includes network drivers.
 	// We must pass the kernel version explicitly because mkinitfs defaults to
 	// uname -r which returns the host kernel, not the chroot's Alpine kernel.
-	log.Printf("Image build [%s v%s]: regenerating initrd with network support", img.Name, img.OSVersion)
+	log.Printf("Image build [%s v%s]: regenerating initrds with network support", img.Name, img.OSVersion)
 	mkinitfsConf := "features=\"ata base cdrom ext4 keymap kms mmc network nvme scsi usb virtio\"\n"
 	os.WriteFile(filepath.Join(rootfsDir, "etc/mkinitfs/mkinitfs.conf"), []byte(mkinitfsConf), 0o644)
 
-	// Find the installed kernel version from /lib/modules/<version>/.
+	// Regenerate initrd for all installed kernels.
 	moduleDirs, _ := filepath.Glob(filepath.Join(rootfsDir, "lib/modules/*"))
 	if len(moduleDirs) == 0 {
 		return fmt.Errorf("no kernel modules found in chroot")
 	}
-	kernelVersion := filepath.Base(moduleDirs[0])
-	if err := runChroot(rootfsDir, "mkinitfs", kernelVersion); err != nil {
-		return fmt.Errorf("mkinitfs: %w", err)
+	for _, modDir := range moduleDirs {
+		ver := filepath.Base(modDir)
+		if err := runChroot(rootfsDir, "mkinitfs", ver); err != nil {
+			return fmt.Errorf("mkinitfs %s: %w", ver, err)
+		}
 	}
 
 	// Configure the system.
@@ -172,15 +176,13 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string) error
 	runChroot(rootfsDir, "rc-update", "add", "networking", "boot")
 	runChroot(rootfsDir, "rc-update", "add", "hostname", "boot")
 
-	// Bootloader config (extlinux).
+	// Bootloader config (extlinux) - use linux-virt for disk boot (optimized for VMs).
 	os.MkdirAll(filepath.Join(rootfsDir, "boot"), 0o755)
-	// Find the kernel version.
-	kernelGlob, _ := filepath.Glob(filepath.Join(rootfsDir, "boot/vmlinuz-*"))
+	virtKernelGlob, _ := filepath.Glob(filepath.Join(rootfsDir, "boot/vmlinuz-*-virt"))
 	kernelFile := "vmlinuz-virt"
 	initrdFile := "initramfs-virt"
-	if len(kernelGlob) > 0 {
-		kernelFile = filepath.Base(kernelGlob[0])
-		// Derive initramfs name from kernel name.
+	if len(virtKernelGlob) > 0 {
+		kernelFile = filepath.Base(virtKernelGlob[0])
 		initrdFile = strings.Replace(kernelFile, "vmlinuz-", "initramfs-", 1)
 	}
 
@@ -200,21 +202,24 @@ LABEL alpine
 		}
 	}
 
-	// Export kernel + initrd for netboot/kexec use.
-	log.Printf("Image build [%s v%s]: exporting kernel and initrd for netboot", img.Name, img.OSVersion)
+	// Export kernel + initrd for netboot use.
+	// Use linux-lts for PXE boot (broader hardware support including Hyper-V Gen1).
+	// The virt kernel is used for disk boot via extlinux.
+	log.Printf("Image build [%s v%s]: exporting LTS kernel and initrd for netboot", img.Name, img.OSVersion)
 	netbootDir := filepath.Join(filepath.Dir(rootfsPath), "netboot")
 	if err := os.MkdirAll(netbootDir, 0o755); err != nil {
 		return fmt.Errorf("create netboot dir: %w", err)
 	}
 
-	if len(kernelGlob) > 0 {
-		if err := copyFile(kernelGlob[0], filepath.Join(netbootDir, "vmlinuz")); err != nil {
+	ltsKernelGlob, _ := filepath.Glob(filepath.Join(rootfsDir, "boot/vmlinuz-*-lts"))
+	ltsInitrdGlob, _ := filepath.Glob(filepath.Join(rootfsDir, "boot/initramfs-*-lts"))
+	if len(ltsKernelGlob) > 0 {
+		if err := copyFile(ltsKernelGlob[0], filepath.Join(netbootDir, "vmlinuz")); err != nil {
 			return fmt.Errorf("export kernel: %w", err)
 		}
 	}
-	initrdGlob, _ := filepath.Glob(filepath.Join(rootfsDir, "boot/initramfs-*"))
-	if len(initrdGlob) > 0 {
-		if err := copyFile(initrdGlob[0], filepath.Join(netbootDir, "initrd.img")); err != nil {
+	if len(ltsInitrdGlob) > 0 {
+		if err := copyFile(ltsInitrdGlob[0], filepath.Join(netbootDir, "initrd.img")); err != nil {
 			return fmt.Errorf("export initrd: %w", err)
 		}
 	}
@@ -273,13 +278,26 @@ func (m *Manager) buildDebian(img *DiskImage, rootfsPath, serverIP, distro strin
 		run("umount", "-l", filepath.Join(rootfsDir, "proc"))
 	}()
 
+	// For Ubuntu, enable universe repository (extlinux, syslinux-common, ifupdown
+	// are in universe, not main). Debootstrap only configures main by default.
+	if distro == "ubuntu" {
+		sources := fmt.Sprintf("deb %s %s main universe\n", mirror, codename)
+		os.WriteFile(filepath.Join(rootfsDir, "etc/apt/sources.list"), []byte(sources), 0o644)
+	}
+
 	// Install kernel + bootloader + packages.
 	log.Printf("Image build [%s v%s]: installing packages", img.Name, img.OSVersion)
 
 	// Set DEBIAN_FRONTEND to avoid interactive prompts.
 	debEnv := []string{"DEBIAN_FRONTEND=noninteractive"}
 
-	basePkgs := []string{"linux-image-amd64", "extlinux", "syslinux-common", "ca-certificates", "systemd-sysv", "ifupdown", "wget", "e2fsprogs"}
+	// Use distro-specific kernel package.
+	kernelPkg := "linux-image-amd64"
+	if distro == "ubuntu" {
+		kernelPkg = "linux-image-generic"
+	}
+
+	basePkgs := []string{kernelPkg, "extlinux", "syslinux-common", "ca-certificates", "systemd-sysv", "ifupdown", "wget", "e2fsprogs"}
 	allPkgs := append(basePkgs, img.Packages...)
 
 	if err := runChrootEnv(rootfsDir, debEnv, "apt-get", "update"); err != nil {
