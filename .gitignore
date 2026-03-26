@@ -7,3 +7,4 @@ rootfs/
 *.qcow2
 *.vmdk
 *.vhdx
+firewall4ai
