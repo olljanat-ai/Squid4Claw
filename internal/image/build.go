@@ -113,10 +113,19 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string) error
 	// This must be done AFTER apk add, because installing the mkinitfs package
 	// overwrites mkinitfs.conf with its default (which lacks "network").
 	// Then regenerate the initrd so it includes network drivers.
+	// We must pass the kernel version explicitly because mkinitfs defaults to
+	// uname -r which returns the host kernel, not the chroot's Alpine kernel.
 	log.Printf("Image build [%s v%s]: regenerating initrd with network support", img.Name, img.OSVersion)
 	mkinitfsConf := "features=\"ata base cdrom ext4 keymap kms mmc network nvme scsi usb virtio\"\n"
 	os.WriteFile(filepath.Join(rootfsDir, "etc/mkinitfs/mkinitfs.conf"), []byte(mkinitfsConf), 0o644)
-	if err := runChroot(rootfsDir, "mkinitfs"); err != nil {
+
+	// Find the installed kernel version from /lib/modules/<version>/.
+	moduleDirs, _ := filepath.Glob(filepath.Join(rootfsDir, "lib/modules/*"))
+	if len(moduleDirs) == 0 {
+		return fmt.Errorf("no kernel modules found in chroot")
+	}
+	kernelVersion := filepath.Base(moduleDirs[0])
+	if err := runChroot(rootfsDir, "mkinitfs", kernelVersion); err != nil {
 		return fmt.Errorf("mkinitfs: %w", err)
 	}
 
