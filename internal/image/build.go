@@ -207,22 +207,22 @@ LABEL alpine
 	}
 
 	// Export virt kernel + initrd for netboot use.
+	// Use the same kernel/initrd files identified for extlinux config.
+	// Alpine names files as vmlinuz-virt (no version number), while the glob
+	// vmlinuz-*-virt wouldn't match, so we use the resolved file names directly.
 	log.Printf("Image build [%s v%s]: exporting kernel and initrd for netboot", img.Name, img.OSVersion)
 	netbootDir := filepath.Join(filepath.Dir(rootfsPath), "netboot")
 	if err := os.MkdirAll(netbootDir, 0o755); err != nil {
 		return fmt.Errorf("create netboot dir: %w", err)
 	}
 
-	if len(virtKernelGlob) > 0 {
-		if err := copyFile(virtKernelGlob[0], filepath.Join(netbootDir, "vmlinuz")); err != nil {
-			return fmt.Errorf("export kernel: %w", err)
-		}
+	kernelPath := filepath.Join(rootfsDir, "boot", kernelFile)
+	initrdPath := filepath.Join(rootfsDir, "boot", initrdFile)
+	if err := copyFile(kernelPath, filepath.Join(netbootDir, "vmlinuz")); err != nil {
+		return fmt.Errorf("export kernel: %w", err)
 	}
-	virtInitrdGlob, _ := filepath.Glob(filepath.Join(rootfsDir, "boot/initramfs-*-virt"))
-	if len(virtInitrdGlob) > 0 {
-		if err := copyFile(virtInitrdGlob[0], filepath.Join(netbootDir, "initrd.img")); err != nil {
-			return fmt.Errorf("export initrd: %w", err)
-		}
+	if err := copyFile(initrdPath, filepath.Join(netbootDir, "initrd.img")); err != nil {
+		return fmt.Errorf("export initrd: %w", err)
 	}
 
 	// Create rootfs tarball.
@@ -413,6 +413,14 @@ done
 # Skip if not a deploy boot (no fw4ai parameters).
 [ -z "$FW4AI_AGENT" ] && exit 0
 [ -z "$FW4AI_SERVER" ] && exit 0
+
+# Ensure networking is configured. On some distros (e.g., Ubuntu),
+# configure_networking may not have been called yet at premount time.
+# The function is idempotent (guards with CONFIGURE_NETWORKING_DONE).
+if [ -f /scripts/functions ]; then
+    . /scripts/functions
+    configure_networking
+fi
 
 API="http://${FW4AI_SERVER}"
 
