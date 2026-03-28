@@ -405,6 +405,33 @@
           <div id="distros-list" style="padding-top:8px"></div>
         </div>
         <div class="card">
+          <h3>LLM Observability</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Langfuse Integration</div>
+              <div class="setting-desc">Forward AI agent LLM API calls (OpenAI, Anthropic, Gemini, Mistral) to a Langfuse instance for observability and auditing. Requires full logging mode on relevant approvals.</div>
+            </div>
+            <div class="setting-control">
+              <span id="obs-status" class="badge-status">loading...</span>
+              <button id="obs-toggle-btn" class="btn btn-outline btn-sm" onclick="toggleObservability()" disabled>Toggle</button>
+            </div>
+          </div>
+          <div id="obs-config" style="padding-top:8px; display:none">
+            <div style="display:flex; flex-direction:column; gap:8px; max-width:500px">
+              <label>Langfuse Host URL
+                <input type="text" id="obs-host" placeholder="http://localhost:3000" style="width:100%">
+              </label>
+              <label>Langfuse Public Key
+                <input type="text" id="obs-public-key" placeholder="pk-lf-..." style="width:100%">
+              </label>
+              <label>Langfuse Secret Key
+                <input type="password" id="obs-secret-key" placeholder="sk-lf-..." style="width:100%">
+              </label>
+              <button class="btn btn-primary btn-sm" onclick="saveObservability()" style="align-self:flex-start">Save</button>
+            </div>
+          </div>
+        </div>
+        <div class="card">
           <h3>SSH Access</h3>
           <div class="setting-row">
             <div class="setting-info">

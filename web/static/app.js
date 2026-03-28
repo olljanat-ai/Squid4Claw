@@ -2157,6 +2157,7 @@ async function loadSystem() {
   }
   loadLanguageSettings();
   loadDistroSettings();
+  loadObservability();
 }
 
 async function loadServiceLogs() {
@@ -2273,6 +2274,62 @@ async function toggleLearningMode() {
   try {
     await api('POST', '/api/settings/learning-mode', { enabled: !isEnabled });
     loadSystem();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+// --- Observability ---
+
+async function loadObservability() {
+  try {
+    const data = await api('GET', '/api/settings/observability');
+    const statusEl = document.getElementById('obs-status');
+    const btn = document.getElementById('obs-toggle-btn');
+    const configDiv = document.getElementById('obs-config');
+    statusEl.textContent = data.enabled ? 'enabled' : 'disabled';
+    statusEl.className = 'badge-status ' + (data.enabled ? 'approved' : 'denied');
+    btn.textContent = data.enabled ? 'Disable' : 'Enable';
+    btn.disabled = false;
+    configDiv.style.display = data.enabled ? 'block' : 'none';
+    document.getElementById('obs-host').value = data.langfuse_host || '';
+    document.getElementById('obs-public-key').value = data.langfuse_public_key || '';
+    document.getElementById('obs-secret-key').value = data.langfuse_secret_key || '';
+  } catch (e) {
+    console.error('Observability load error:', e);
+  }
+}
+
+async function toggleObservability() {
+  const statusEl = document.getElementById('obs-status');
+  const isEnabled = statusEl.textContent === 'enabled';
+  try {
+    const current = await api('GET', '/api/settings/observability');
+    current.enabled = !isEnabled;
+    await api('POST', '/api/settings/observability', current);
+    loadObservability();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function saveObservability() {
+  const host = document.getElementById('obs-host').value.trim();
+  const publicKey = document.getElementById('obs-public-key').value.trim();
+  const secretKey = document.getElementById('obs-secret-key').value.trim();
+  if (!host || !publicKey || !secretKey) {
+    alert('All Langfuse fields are required');
+    return;
+  }
+  try {
+    await api('POST', '/api/settings/observability', {
+      enabled: true,
+      langfuse_host: host,
+      langfuse_public_key: publicKey,
+      langfuse_secret_key: secretKey
+    });
+    alert('Observability settings saved');
+    loadObservability();
   } catch (e) {
     alert('Error: ' + e.message);
   }
