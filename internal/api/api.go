@@ -52,6 +52,11 @@ type Handler struct {
 
 	catMu      sync.RWMutex
 	categories []string
+
+	// Global VM settings.
+	vmSettingsMu sync.RWMutex
+	keyboard     string // keyboard layout, e.g. "us", "fi"
+	timezone     string // timezone, e.g. "UTC", "Europe/Helsinki"
 }
 
 // RegisterRoutes sets up all API routes on the given mux.
@@ -134,6 +139,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/settings/languages", h.setDisabledLanguages)
 	mux.HandleFunc("GET /api/settings/distros", h.getDisabledDistros)
 	mux.HandleFunc("POST /api/settings/distros", h.setDisabledDistros)
+	mux.HandleFunc("GET /api/settings/vm-settings", h.getVMSettings)
+	mux.HandleFunc("POST /api/settings/vm-settings", h.setVMSettings)
 	mux.HandleFunc("GET /api/system/logs", h.systemLogs)
 	mux.HandleFunc("POST /api/system/upgrade", h.systemUpgrade)
 	mux.HandleFunc("POST /api/system/reboot", h.systemReboot)
@@ -1082,6 +1089,44 @@ func (h *Handler) setDisabledDistros(w http.ResponseWriter, r *http.Request) {
 	}
 	h.save()
 	writeJSON(w, http.StatusOK, map[string][]string{"disabled": req.Disabled})
+}
+
+// LoadVMSettings restores keyboard/timezone from persisted state.
+func (h *Handler) LoadVMSettings(keyboard, timezone string) {
+	h.vmSettingsMu.Lock()
+	defer h.vmSettingsMu.Unlock()
+	h.keyboard = keyboard
+	h.timezone = timezone
+}
+
+// GetVMSettings returns the current keyboard and timezone settings.
+func (h *Handler) GetVMSettings() (keyboard, timezone string) {
+	h.vmSettingsMu.RLock()
+	defer h.vmSettingsMu.RUnlock()
+	return h.keyboard, h.timezone
+}
+
+func (h *Handler) getVMSettings(w http.ResponseWriter, r *http.Request) {
+	h.vmSettingsMu.RLock()
+	defer h.vmSettingsMu.RUnlock()
+	writeJSON(w, http.StatusOK, map[string]string{"keyboard": h.keyboard, "timezone": h.timezone})
+}
+
+func (h *Handler) setVMSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Keyboard string `json:"keyboard"`
+		Timezone string `json:"timezone"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	h.vmSettingsMu.Lock()
+	h.keyboard = req.Keyboard
+	h.timezone = req.Timezone
+	h.vmSettingsMu.Unlock()
+	h.save()
+	writeJSON(w, http.StatusOK, map[string]string{"keyboard": req.Keyboard, "timezone": req.Timezone})
 }
 
 func (h *Handler) save() {
