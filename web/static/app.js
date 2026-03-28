@@ -52,6 +52,7 @@ function navigate(page) {
   document.querySelectorAll('.sidebar nav a').forEach(a => a.classList.remove('active'));
   document.getElementById('page-' + page).classList.add('active');
   document.querySelector(`[data-page="${page}"]`).classList.add('active');
+  location.hash = page;
   if (page === 'dashboard') loadDashboard();
   if (page === 'agents') loadAgents();
   if (page === 'approvals') loadApprovals();
@@ -2727,7 +2728,8 @@ document.addEventListener('DOMContentLoaded', () => {
       navigate(a.dataset.page);
     });
   });
-  navigate('dashboard');
+  const startPage = location.hash ? location.hash.substring(1) : 'dashboard';
+  navigate(startPage);
   startPolling();
   loadVersion();
 });
