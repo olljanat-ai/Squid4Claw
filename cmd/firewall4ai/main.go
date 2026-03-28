@@ -53,7 +53,8 @@ type storeData struct {
 	Databases         []database.DatabaseConfig `json:"databases"`
 	DiskImages        []image.DiskImage        `json:"disk_images"`
 	Agents            []agent.Agent            `json:"agents"`
-	DHCPLeases        []dhcp.Lease             `json:"dhcp_leases"`
+	DHCPLeases        []dhcp.Lease                `json:"dhcp_leases"`
+	Observability     config.ObservabilityConfig  `json:"observability"`
 }
 
 func main() {
@@ -95,14 +96,6 @@ func main() {
 	dbMgr := database.NewManager()
 	logger := proxylog.NewLogger(cfg.MaxLogEntries)
 	agentMgr := agent.NewManager()
-
-	// Initialize LLM observability (Langfuse integration).
-	obs := observability.NewFromConfig(cfg.Observability)
-	if obs != nil {
-		logger.SetObserver(func(e proxylog.Entry) {
-			obs.ProcessEntry(e)
-		})
-	}
 
 	// Network configuration.
 	serverIP := net.ParseIP("10.255.255.1")
@@ -158,6 +151,19 @@ func main() {
 	}
 	if len(state.DisabledDistros) > 0 {
 		config.SetDisabledDistros(state.DisabledDistros)
+	}
+
+	// Restore observability config from persisted state (overrides config.json).
+	if state.Observability.LangfuseHost != "" {
+		config.SetObservability(state.Observability)
+	}
+
+	// Initialize LLM observability (Langfuse integration).
+	obs := observability.NewFromConfig(config.GetObservability())
+	if obs != nil {
+		logger.SetObserver(func(e proxylog.Entry) {
+			obs.ProcessEntry(e)
+		})
 	}
 
 	// Setup static DHCP leases and DNS entries for configured agents.
@@ -275,6 +281,7 @@ func main() {
 			d.DiskImages = imageMgr.ExportImages()
 			d.Agents = agentMgr.ExportAgents()
 			d.DHCPLeases = dhcpServer.ExportLeases()
+			d.Observability = cfg.Observability
 		})
 	}
 	apiHandler.SaveFunc = saveFunc
@@ -305,6 +312,20 @@ func main() {
 	}
 	apiHandler.SetDisabledDistrosFunc = func(disabled []string) {
 		log.Printf("Disabled distros updated: %v", disabled)
+	}
+	apiHandler.SetObservabilityFunc = func(obsCfg config.ObservabilityConfig) {
+		// Recreate the observer with new config.
+		if obs != nil {
+			obs.Close()
+		}
+		obs = observability.NewFromConfig(obsCfg)
+		if obs != nil {
+			logger.SetObserver(func(e proxylog.Entry) {
+				obs.ProcessEntry(e)
+			})
+		} else {
+			logger.SetObserver(nil)
+		}
 	}
 	for _, reg := range cfg.Registries {
 		log.Printf("Container registry %s: intercepting hosts %v", reg.Name, reg.Hosts)

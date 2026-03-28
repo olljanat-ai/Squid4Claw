@@ -103,6 +103,20 @@ func IsDistroDisabled(distroType string) bool {
 	return false
 }
 
+// GetObservability returns the current observability config.
+func GetObservability() ObservabilityConfig {
+	mu.RLock()
+	defer mu.RUnlock()
+	return current.Observability
+}
+
+// SetObservability updates the observability config at runtime.
+func SetObservability(obs ObservabilityConfig) {
+	mu.Lock()
+	defer mu.Unlock()
+	current.Observability = obs
+}
+
 var (
 	defaultConfig = Config{
 		ListenAddr:         ":8080",

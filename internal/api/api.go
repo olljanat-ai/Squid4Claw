@@ -35,6 +35,7 @@ type Handler struct {
 	SetLearningModeFunc    func(bool)      // called to update learning mode on the proxy
 	SetDisabledLanguagesFunc func([]string) // called to update disabled languages
 	SetDisabledDistrosFunc   func([]string) // called to update disabled distros
+	SetObservabilityFunc     func(config.ObservabilityConfig) // called when observability config changes
 	Version                string          // build version string
 
 	// Database management.
@@ -133,6 +134,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/settings/languages", h.setDisabledLanguages)
 	mux.HandleFunc("GET /api/settings/distros", h.getDisabledDistros)
 	mux.HandleFunc("POST /api/settings/distros", h.setDisabledDistros)
+	mux.HandleFunc("GET /api/settings/observability", h.getObservability)
+	mux.HandleFunc("POST /api/settings/observability", h.setObservability)
 	mux.HandleFunc("GET /api/system/logs", h.systemLogs)
 	mux.HandleFunc("POST /api/system/upgrade", h.systemUpgrade)
 	mux.HandleFunc("POST /api/system/reboot", h.systemReboot)
@@ -1081,6 +1084,42 @@ func (h *Handler) setDisabledDistros(w http.ResponseWriter, r *http.Request) {
 	}
 	h.save()
 	writeJSON(w, http.StatusOK, map[string][]string{"disabled": req.Disabled})
+}
+
+// --- Observability ---
+
+func (h *Handler) getObservability(w http.ResponseWriter, r *http.Request) {
+	obs := config.GetObservability()
+	// Mask the secret key in the response.
+	masked := obs
+	if masked.LangfuseSecretKey != "" {
+		masked.LangfuseSecretKey = "********"
+	}
+	writeJSON(w, http.StatusOK, masked)
+}
+
+func (h *Handler) setObservability(w http.ResponseWriter, r *http.Request) {
+	var req config.ObservabilityConfig
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	// If the secret key is masked, keep the existing one.
+	if req.LangfuseSecretKey == "********" {
+		existing := config.GetObservability()
+		req.LangfuseSecretKey = existing.LangfuseSecretKey
+	}
+	config.SetObservability(req)
+	if h.SetObservabilityFunc != nil {
+		h.SetObservabilityFunc(req)
+	}
+	h.save()
+	// Return the config with masked secret.
+	resp := req
+	if resp.LangfuseSecretKey != "" {
+		resp.LangfuseSecretKey = "********"
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) save() {
