@@ -484,8 +484,14 @@
     <div class="modal">
       <h3 id="modal-rule-title">Add URL Rule</h3>
       <div class="form-group">
-        <label>Host Pattern (supports wildcards like *.example.com)</label>
-        <input type="text" id="rule-host" placeholder="e.g., api.example.com or *.example.com">
+        <label>Host Pattern</label>
+        <input type="text" id="rule-host" placeholder="e.g., api.example.com or *.example.com" oninput="updateWildcardHint()">
+        <div class="wildcard-helpers">
+          <span class="helper-label">Quick patterns:</span>
+          <button type="button" class="btn btn-outline btn-xs" onclick="applyWildcardPrefix()">*.domain</button>
+          <button type="button" class="btn btn-outline btn-xs" onclick="insertWildcard('*')">All hosts (*)</button>
+        </div>
+        <div id="wildcard-hint" class="field-hint" style="display:none"></div>
       </div>
       <div class="form-group">
         <label>Path Prefix (optional, leave empty for all paths)</label>
@@ -765,8 +771,12 @@
         </select>
       </div>
       <div class="form-group">
-        <label>Package Name (e.g., curl or lib* for wildcard)</label>
-        <input type="text" id="package-rule-host" placeholder="e.g., curl">
+        <label>Package Name</label>
+        <input type="text" id="package-rule-host" placeholder="e.g., curl or lib* for wildcard">
+        <div class="wildcard-helpers">
+          <span class="helper-label">Quick patterns:</span>
+          <button type="button" class="btn btn-outline btn-xs" onclick="document.getElementById('package-rule-host').value='*';document.getElementById('package-rule-host').focus()">All packages (*)</button>
+        </div>
       </div>
       <div class="form-group">
         <label>Level</label>

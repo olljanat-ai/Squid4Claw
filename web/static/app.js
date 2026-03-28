@@ -633,7 +633,7 @@ async function loadApprovals() {
           : '<span class="badge-status" style="opacity:0.4">Normal</span>';
         rows.push(`<tr>
           <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('url',this)"></td>
-          <td><strong>${esc(a.host)}</strong></td>
+          <td><strong>${esc(a.host)}</strong>${a.host.includes('*') ? ' <span class="badge-status" style="background:rgba(99,102,241,0.15);color:var(--accent);font-size:10px">wildcard</span>' : ''}</td>
           <td>${pathDisplay}</td>
           <td>${categoryDisplay}</td>
           <td>${logModeDisplay}</td>
@@ -696,6 +696,48 @@ async function promoteToGlobal(host, sourceIP, pathPrefix, status) {
 }
 
 // --- URL Rule Modal ---
+// --- Wildcard pattern helpers ---
+function applyWildcardPrefix() {
+  const input = document.getElementById('rule-host');
+  const val = input.value.trim();
+  if (val && !val.startsWith('*.')) {
+    // Extract domain: e.g., "api.example.com" -> "*.example.com"
+    const parts = val.split('.');
+    if (parts.length >= 2) {
+      input.value = '*.' + parts.slice(parts.length >= 3 ? 1 : 0).join('.');
+    } else {
+      input.value = '*.' + val;
+    }
+  } else if (!val) {
+    input.value = '*.';
+    input.focus();
+  }
+  updateWildcardHint();
+}
+
+function insertWildcard(pattern) {
+  document.getElementById('rule-host').value = pattern;
+  updateWildcardHint();
+}
+
+function updateWildcardHint() {
+  const val = document.getElementById('rule-host').value.trim();
+  const hint = document.getElementById('wildcard-hint');
+  if (val.includes('*')) {
+    hint.style.display = 'block';
+    if (val === '*') {
+      hint.innerHTML = '<span class="wildcard-match">Matches ALL hosts</span> &mdash; this is very broad, consider using a more specific pattern.';
+    } else if (val.startsWith('*.')) {
+      const domain = val.substring(2);
+      hint.innerHTML = 'Matches any subdomain of <span class="wildcard-match">' + esc(domain) + '</span> (e.g., api.' + esc(domain) + ', cdn.' + esc(domain) + ')';
+    } else {
+      hint.innerHTML = 'Wildcard pattern: <span class="wildcard-match">' + esc(val) + '</span>';
+    }
+  } else {
+    hint.style.display = 'none';
+  }
+}
+
 function showAddRule() {
   editingRule = null;
   document.getElementById('modal-rule-title').textContent = 'Add URL Rule';
@@ -710,6 +752,7 @@ function showAddRule() {
   document.getElementById('rule-logging-mode').value = 'normal';
   document.getElementById('rule-note').value = '';
   updateRuleFields();
+  updateWildcardHint();
   document.getElementById('modal-rule').classList.add('active');
 }
 
@@ -736,6 +779,7 @@ function showEditRule(idx) {
   document.getElementById('rule-logging-mode').value = a.logging_mode || 'normal';
   document.getElementById('rule-note').value = a.note || '';
   updateRuleFields();
+  updateWildcardHint();
   document.getElementById('modal-rule').classList.add('active');
 }
 
@@ -845,7 +889,7 @@ async function loadImages() {
         }
         rows.push(`<tr>
           <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('image',this)"></td>
-          <td><strong>${esc(a.host)}</strong></td>
+          <td><strong>${esc(a.host)}</strong>${a.host.includes('*') ? ' <span class="badge-status" style="background:rgba(99,102,241,0.15);color:var(--accent);font-size:10px">wildcard</span>' : ''}</td>
           <td>${categoryDisplay}</td>
           <td>${skillDisplay}</td>
           <td>${sourceDisplay}</td>
