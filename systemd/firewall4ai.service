@@ -1,5 +1,5 @@
 [Unit]
-Description=Firewall4AI AI proxy
+Description=Firewall4AI
 After=network.target firewall4ai-iptables.service
 Requires=firewall4ai-iptables.service
 
