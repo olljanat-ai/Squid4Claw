@@ -304,6 +304,9 @@ func main() {
 	if p.LearningMode {
 		log.Printf("Learning mode is ENABLED — all connections will be allowed by default")
 	}
+	p.OnActivity = func(sourceIP string) {
+		agentMgr.SetLastSeen(sourceIP)
+	}
 	apiHandler.SetLearningModeFunc = func(enabled bool) {
 		p.LearningMode = enabled
 		if enabled {

@@ -41,7 +41,8 @@ type Agent struct {
 	DiskDevice        string    `json:"disk_device"`         // e.g., "/dev/vda" or "/dev/sda"
 	SkillIDs     []string  `json:"skill_ids"`  // Allocated skills from the skills library
 	Status       Status    `json:"status"`
-	StatusMsg         string    `json:"status_msg"` // Additional status detail (e.g., error message)
+	StatusMsg         string    `json:"status_msg"`  // Additional status detail (e.g., error message)
+	LastSeen          time.Time `json:"last_seen"`   // Last heartbeat/activity timestamp
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
@@ -216,6 +217,19 @@ func (m *Manager) List() []Agent {
 		out = append(out, *a)
 	}
 	return out
+}
+
+// SetLastSeen updates the last-seen timestamp for an agent by IP.
+func (m *Manager) SetLastSeen(ip string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id, ok := m.byIP[ip]
+	if !ok {
+		return
+	}
+	if a, ok := m.agents[id]; ok {
+		a.LastSeen = time.Now()
+	}
 }
 
 // SetStatus updates the status of an agent.

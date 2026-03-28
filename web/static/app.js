@@ -2645,7 +2645,7 @@ async function loadAgentVMs() {
     const tbody = document.getElementById('agents-tbody');
     tbody.innerHTML = '';
     if (!currentAgents || currentAgents.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No agents configured. Add one to get started.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No agents configured. Add one to get started.</td></tr>';
       return;
     }
     currentAgents.forEach(a => {
@@ -2675,6 +2675,17 @@ async function loadAgentVMs() {
         hostnameDisplay = `<strong>${esc(a.hostname)}</strong>`;
       }
 
+      // Last seen / health indicator.
+      let lastSeenHTML = '<span class="muted">never</span>';
+      if (a.last_seen && a.last_seen !== '0001-01-01T00:00:00Z') {
+        const ago = timeAgo(a.last_seen);
+        const seenDate = new Date(a.last_seen);
+        const minutesAgo = (Date.now() - seenDate.getTime()) / 60000;
+        const healthClass = minutesAgo < 5 ? 'approved' : minutesAgo < 30 ? 'pending' : 'denied';
+        const healthLabel = minutesAgo < 5 ? 'online' : minutesAgo < 30 ? 'idle' : 'offline';
+        lastSeenHTML = `<span class="badge-status ${healthClass}" title="${ago}">${healthLabel}</span> ${ago}`;
+      }
+
       tbody.innerHTML += `<tr>
         <td>${hostnameDisplay}</td>
         <td><code>${esc(a.mac)}</code></td>
@@ -2682,6 +2693,7 @@ async function loadAgentVMs() {
         <td>${imgLabel}</td>
         <td>${skillsHTML}</td>
         <td><span class="badge-status ${statusClass}">${esc(statusLabel)}</span></td>
+        <td>${lastSeenHTML}</td>
         <td>
           <button class="btn btn-outline btn-sm" onclick="editAgent('${esc(a.id)}')">Edit</button>
           <button class="btn btn-danger btn-sm" onclick="deleteAgent('${esc(a.id)}','${esc(a.hostname)}')">Delete</button>
