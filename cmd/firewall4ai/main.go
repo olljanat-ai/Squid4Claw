@@ -53,6 +53,8 @@ type storeData struct {
 	DiskImages        []image.DiskImage        `json:"disk_images"`
 	Agents            []agent.Agent            `json:"agents"`
 	DHCPLeases        []dhcp.Lease             `json:"dhcp_leases"`
+	Keyboard          string                   `json:"keyboard"`
+	Timezone          string                   `json:"timezone"`
 }
 
 func main() {
@@ -214,6 +216,7 @@ func main() {
 		AgentManager:     agentMgr,
 	}
 	apiHandler.LoadCategories(state.Categories)
+	apiHandler.LoadVMSettings(state.Keyboard, state.Timezone)
 
 	// Agent change callbacks.
 	apiHandler.OnAgentChange = func(a *agent.Agent) {
@@ -242,7 +245,9 @@ func main() {
 			d.DiskImages = imageMgr.ExportImages()
 		})
 
-		if err := imageMgr.BuildImage(img, version, serverIP.String()); err != nil {
+		keyboard, tz := apiHandler.GetVMSettings()
+		buildSettings := image.BuildSettings{Keyboard: keyboard, Timezone: tz}
+		if err := imageMgr.BuildImage(img, version, serverIP.String(), buildSettings); err != nil {
 			log.Printf("Failed to build image %s v%d: %v", img.Name, version, err)
 			imageMgr.SetVersionStatus(img.ID, version, image.BuildStatusError, err.Error())
 		} else {
@@ -272,6 +277,9 @@ func main() {
 			d.DiskImages = imageMgr.ExportImages()
 			d.Agents = agentMgr.ExportAgents()
 			d.DHCPLeases = dhcpServer.ExportLeases()
+			keyboard, tz := apiHandler.GetVMSettings()
+			d.Keyboard = keyboard
+			d.Timezone = tz
 		})
 	}
 	apiHandler.SaveFunc = saveFunc

@@ -42,18 +42,28 @@ const (
 	AIToolOpenAICodex   AITool = "openai_codex"
 )
 
+// ContainerTool represents a container runtime that can be installed.
+type ContainerTool string
+
+const (
+	ContainerToolDocker     ContainerTool = "docker"
+	ContainerToolNomad      ContainerTool = "nomad"
+	ContainerToolKubernetes ContainerTool = "kubernetes"
+)
+
 // DiskImage represents a disk image configuration and its built versions.
 type DiskImage struct {
-	ID        string         `json:"id"`
-	Name      string         `json:"name"`
-	OS        agent.OSType   `json:"os"`         // alpine, debian, ubuntu
-	OSVersion string         `json:"os_version"` // e.g., "3.23", "13"
-	Packages  []string       `json:"packages"`   // packages to install in rootfs
-	AITools   []AITool       `json:"ai_tools"`   // pre-configured AI coding tools to install
-	Scripts   []string       `json:"scripts"`    // custom shell script steps to run during build
-	Versions  []ImageVersion `json:"versions"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	ID             string          `json:"id"`
+	Name           string          `json:"name"`
+	OS             agent.OSType    `json:"os"`              // alpine, debian, ubuntu
+	OSVersion      string          `json:"os_version"`      // e.g., "3.23", "13"
+	Packages       []string        `json:"packages"`        // packages to install in rootfs
+	AITools        []AITool        `json:"ai_tools"`        // pre-configured AI coding tools to install
+	ContainerTools []ContainerTool `json:"container_tools"` // container runtimes to install
+	Scripts        []string        `json:"scripts"`         // custom shell script steps to run during build
+	Versions       []ImageVersion  `json:"versions"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 // LatestReadyVersion returns the highest version number with BuildStatusReady, or 0 if none.

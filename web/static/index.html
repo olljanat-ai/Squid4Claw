@@ -58,9 +58,9 @@
         </div>
         <div class="card">
           <table>
-            <thead><tr><th>Name</th><th>OS</th><th>Packages</th><th>AI Tools</th><th>Versions</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th>OS</th><th>Packages</th><th>AI Tools</th><th>Container Tools</th><th>Versions</th><th>Actions</th></tr></thead>
             <tbody id="disk-images-tbody">
-              <tr><td colspan="6" class="empty-state">No disk images configured. Create one to get started.</td></tr>
+              <tr><td colspan="7" class="empty-state">No disk images configured. Create one to get started.</td></tr>
             </tbody>
           </table>
         </div>
@@ -71,9 +71,9 @@
         </div>
         <div class="card">
           <table>
-            <thead><tr><th>Hostname</th><th>MAC Address</th><th>IP</th><th>Disk Image</th><th>Skills</th><th>Status</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Hostname</th><th>MAC Address</th><th>IP</th><th>Disk Image</th><th>Skills</th><th>SSH Keys</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody id="agents-tbody">
-              <tr><td colspan="7" class="empty-state">No agents configured. Add one to get started.</td></tr>
+              <tr><td colspan="8" class="empty-state">No agents configured. Add one to get started.</td></tr>
             </tbody>
           </table>
         </div>
@@ -99,7 +99,7 @@
             <option value="">All statuses</option>
             <option value="approved">Approved</option>
             <option value="denied">Denied</option>
-            <option value="pending">Pending</option>
+            <option value="pending" selected>Pending</option>
           </select>
           <button class="btn btn-outline btn-sm" onclick="clearFilters('url')">Clear</button>
         </div>
@@ -142,7 +142,7 @@
             <option value="">All statuses</option>
             <option value="approved">Approved</option>
             <option value="denied">Denied</option>
-            <option value="pending">Pending</option>
+            <option value="pending" selected>Pending</option>
           </select>
           <button class="btn btn-outline btn-sm" onclick="clearFilters('image')">Clear</button>
         </div>
@@ -188,7 +188,7 @@
             <option value="">All statuses</option>
             <option value="approved">Approved</option>
             <option value="denied">Denied</option>
-            <option value="pending">Pending</option>
+            <option value="pending" selected>Pending</option>
           </select>
           <button class="btn btn-outline btn-sm" onclick="clearFilters('package')">Clear</button>
         </div>
@@ -234,7 +234,7 @@
             <option value="">All statuses</option>
             <option value="approved">Approved</option>
             <option value="denied">Denied</option>
-            <option value="pending">Pending</option>
+            <option value="pending" selected>Pending</option>
           </select>
           <button class="btn btn-outline btn-sm" onclick="clearFilters('library')">Clear</button>
         </div>
@@ -403,6 +403,33 @@
             </div>
           </div>
           <div id="distros-list" style="padding-top:8px"></div>
+        </div>
+        <div class="card">
+          <h3>Agent VM Settings</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Keyboard Layout</div>
+              <div class="setting-desc">Keyboard layout for all Agent VMs (e.g., us, fi, de, gb).</div>
+            </div>
+            <div class="setting-control">
+              <input type="text" id="vm-keyboard" placeholder="us" style="width:100px">
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Timezone</div>
+              <div class="setting-desc">Timezone for all Agent VMs (e.g., UTC, Europe/Helsinki, America/New_York).</div>
+            </div>
+            <div class="setting-control">
+              <input type="text" id="vm-timezone" placeholder="UTC" style="width:200px">
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info"></div>
+            <div class="setting-control">
+              <button class="btn btn-primary btn-sm" onclick="saveVMSettings()">Save VM Settings</button>
+            </div>
+          </div>
         </div>
         <div class="card">
           <h3>SSH Access</h3>
@@ -864,6 +891,15 @@
         </div>
       </div>
       <div class="form-group">
+        <label>Container Tools</label>
+        <div class="checkbox-group">
+          <label class="checkbox-label"><input type="radio" name="disk-image-container-tools" id="disk-image-ct-none" value="none" checked> None</label>
+          <label class="checkbox-label"><input type="radio" name="disk-image-container-tools" id="disk-image-ct-docker" value="docker"> Docker</label>
+          <label class="checkbox-label"><input type="radio" name="disk-image-container-tools" id="disk-image-ct-nomad" value="nomad"> Nomad (includes Docker)</label>
+          <label class="checkbox-label"><input type="radio" name="disk-image-container-tools" id="disk-image-ct-kubernetes" value="kubernetes"> Kubernetes</label>
+        </div>
+      </div>
+      <div class="form-group">
         <label>Custom Scripts (one per line, run in chroot during build)</label>
         <textarea id="disk-image-scripts" rows="3" placeholder="e.g., echo 'custom config' > /etc/myapp.conf"></textarea>
       </div>
@@ -903,6 +939,10 @@
       <div class="form-group">
         <label>Skills</label>
         <div id="agent-skills-list" class="checkbox-list"></div>
+      </div>
+      <div class="form-group">
+        <label>SSH Authorized Keys (one public key per line)</label>
+        <textarea id="agent-ssh-keys" rows="3" placeholder="ssh-ed25519 AAAA... user@host"></textarea>
       </div>
       <div class="modal-actions">
         <button class="btn btn-outline" onclick="hideAgentModal()">Cancel</button>

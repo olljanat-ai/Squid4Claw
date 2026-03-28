@@ -29,12 +29,13 @@ func (h *Handler) listDiskImages(w http.ResponseWriter, r *http.Request) {
 }
 
 type createDiskImageRequest struct {
-	Name      string         `json:"name"`
-	OS        agent.OSType   `json:"os"`
-	OSVersion string         `json:"os_version"`
-	Packages  []string       `json:"packages"`
-	AITools   []image.AITool `json:"ai_tools"`
-	Scripts   []string       `json:"scripts"`
+	Name           string              `json:"name"`
+	OS             agent.OSType        `json:"os"`
+	OSVersion      string              `json:"os_version"`
+	Packages       []string            `json:"packages"`
+	AITools        []image.AITool      `json:"ai_tools"`
+	ContainerTools []image.ContainerTool `json:"container_tools"`
+	Scripts        []string            `json:"scripts"`
 }
 
 func (h *Handler) createDiskImage(w http.ResponseWriter, r *http.Request) {
@@ -62,13 +63,14 @@ func (h *Handler) createDiskImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	img := image.DiskImage{
-		ID:        auth.GenerateGUID(),
-		Name:      req.Name,
-		OS:        req.OS,
-		OSVersion: req.OSVersion,
-		Packages:  req.Packages,
-		AITools:   req.AITools,
-		Scripts:   req.Scripts,
+		ID:             auth.GenerateGUID(),
+		Name:           req.Name,
+		OS:             req.OS,
+		OSVersion:      req.OSVersion,
+		Packages:       req.Packages,
+		AITools:        req.AITools,
+		ContainerTools: req.ContainerTools,
+		Scripts:        req.Scripts,
 	}
 
 	if err := h.ImageManager.Add(img); err != nil {
@@ -82,13 +84,14 @@ func (h *Handler) createDiskImage(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) updateDiskImage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID        string         `json:"id"`
-		Name      string         `json:"name"`
-		OS        agent.OSType   `json:"os"`
-		OSVersion string         `json:"os_version"`
-		Packages  []string       `json:"packages"`
-		AITools   []image.AITool `json:"ai_tools"`
-		Scripts   []string       `json:"scripts"`
+		ID             string              `json:"id"`
+		Name           string              `json:"name"`
+		OS             agent.OSType        `json:"os"`
+		OSVersion      string              `json:"os_version"`
+		Packages       []string            `json:"packages"`
+		AITools        []image.AITool      `json:"ai_tools"`
+		ContainerTools []image.ContainerTool `json:"container_tools"`
+		Scripts        []string            `json:"scripts"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -119,6 +122,9 @@ func (h *Handler) updateDiskImage(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AITools != nil {
 		existing.AITools = req.AITools
+	}
+	if req.ContainerTools != nil {
+		existing.ContainerTools = req.ContainerTools
 	}
 	if req.Scripts != nil {
 		existing.Scripts = req.Scripts

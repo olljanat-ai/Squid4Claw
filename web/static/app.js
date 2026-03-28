@@ -2135,6 +2135,13 @@ async function loadSystem() {
   await refreshCategories();
   renderCategories();
   try {
+    const vmData = await api('GET', '/api/settings/vm-settings');
+    document.getElementById('vm-keyboard').value = vmData.keyboard || '';
+    document.getElementById('vm-timezone').value = vmData.timezone || '';
+  } catch (e) {
+    console.error('VM settings load error:', e);
+  }
+  try {
     const data = await api('GET', '/api/settings/ssh');
     const statusEl = document.getElementById('ssh-status');
     const btn = document.getElementById('ssh-toggle-btn');
@@ -2291,6 +2298,17 @@ async function toggleSSH() {
   }
 }
 
+async function saveVMSettings() {
+  const keyboard = document.getElementById('vm-keyboard').value.trim();
+  const timezone = document.getElementById('vm-timezone').value.trim();
+  try {
+    await api('POST', '/api/settings/vm-settings', { keyboard, timezone });
+    alert('VM settings saved. Changes will apply to new image builds.');
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
 async function doUpgrade() {
   const image = document.getElementById('upgrade-image').value.trim();
   if (!confirm('Upgrade to ' + image + '? The system will reboot after upgrade.')) return;
@@ -2369,7 +2387,7 @@ async function loadDiskImages() {
     const tbody = document.getElementById('disk-images-tbody');
     tbody.innerHTML = '';
     if (!currentDiskImages || currentDiskImages.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No disk images configured. Create one to get started.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No disk images configured. Create one to get started.</td></tr>';
       return;
     }
 
@@ -2379,12 +2397,20 @@ async function loadDiskImages() {
       'claude_code': 'Claude Code',
       'openai_codex': 'OpenAI Codex'
     };
+    const containerToolLabels = {
+      'docker': 'Docker',
+      'nomad': 'Nomad',
+      'kubernetes': 'Kubernetes'
+    };
 
     currentDiskImages.forEach(img => {
       const osLabel = (osLabels[img.os] || img.os) + ' ' + (img.os_version || '');
       const pkgs = (img.packages && img.packages.length > 0) ? esc(img.packages.join(', ')) : '<span class="muted">none</span>';
       const aiTools = (img.ai_tools && img.ai_tools.length > 0)
         ? img.ai_tools.map(t => esc(aiToolLabels[t] || t)).join(', ')
+        : '<span class="muted">none</span>';
+      const ctTools = (img.container_tools && img.container_tools.length > 0)
+        ? img.container_tools.map(t => esc(containerToolLabels[t] || t)).join(', ')
         : '<span class="muted">none</span>';
 
       // Build versions display.
@@ -2405,6 +2431,7 @@ async function loadDiskImages() {
         <td>${esc(osLabel)}</td>
         <td>${pkgs}</td>
         <td>${aiTools}</td>
+        <td>${ctTools}</td>
         <td>${versionsHTML}</td>
         <td>
           <button class="btn btn-primary btn-sm" onclick="buildDiskImage('${esc(img.id)}')">Build</button>
@@ -2448,6 +2475,7 @@ function showCreateDiskImage() {
   document.getElementById('disk-image-ai-github-copilot').checked = false;
   document.getElementById('disk-image-ai-claude-code').checked = false;
   document.getElementById('disk-image-ai-openai-codex').checked = false;
+  document.getElementById('disk-image-ct-none').checked = true;
   document.getElementById('disk-image-scripts').value = '';
   document.getElementById('modal-disk-image').classList.add('active');
 }
@@ -2476,6 +2504,11 @@ function editDiskImage(id) {
   document.getElementById('disk-image-ai-github-copilot').checked = aiTools.includes('github_copilot');
   document.getElementById('disk-image-ai-claude-code').checked = aiTools.includes('claude_code');
   document.getElementById('disk-image-ai-openai-codex').checked = aiTools.includes('openai_codex');
+  const ctTools = img.container_tools || [];
+  if (ctTools.includes('nomad')) document.getElementById('disk-image-ct-nomad').checked = true;
+  else if (ctTools.includes('kubernetes')) document.getElementById('disk-image-ct-kubernetes').checked = true;
+  else if (ctTools.includes('docker')) document.getElementById('disk-image-ct-docker').checked = true;
+  else document.getElementById('disk-image-ct-none').checked = true;
   document.getElementById('disk-image-scripts').value = (img.scripts || []).join('\n');
   document.getElementById('modal-disk-image').classList.add('active');
 }
@@ -2491,6 +2524,11 @@ async function submitDiskImage() {
   if (document.getElementById('disk-image-ai-github-copilot').checked) ai_tools.push('github_copilot');
   if (document.getElementById('disk-image-ai-claude-code').checked) ai_tools.push('claude_code');
   if (document.getElementById('disk-image-ai-openai-codex').checked) ai_tools.push('openai_codex');
+  const container_tools = [];
+  const ctValue = document.querySelector('input[name="disk-image-container-tools"]:checked')?.value || 'none';
+  if (ctValue === 'docker') container_tools.push('docker');
+  else if (ctValue === 'nomad') { container_tools.push('docker'); container_tools.push('nomad'); }
+  else if (ctValue === 'kubernetes') container_tools.push('kubernetes');
   const scriptsStr = document.getElementById('disk-image-scripts').value.trim();
   const scripts = scriptsStr ? scriptsStr.split('\n').filter(s => s.trim()) : [];
 
@@ -2502,11 +2540,11 @@ async function submitDiskImage() {
   try {
     if (editingDiskImageID) {
       await api('PUT', '/api/disk-images', {
-        id: editingDiskImageID, name, os, os_version: osVersion, packages, ai_tools, scripts
+        id: editingDiskImageID, name, os, os_version: osVersion, packages, ai_tools, container_tools, scripts
       });
     } else {
       await api('POST', '/api/disk-images', {
-        name, os, os_version: osVersion, packages, ai_tools, scripts
+        name, os, os_version: osVersion, packages, ai_tools, container_tools, scripts
       });
     }
     hideDiskImageModal();
@@ -2544,7 +2582,7 @@ async function loadAgentVMs() {
     const tbody = document.getElementById('agents-tbody');
     tbody.innerHTML = '';
     if (!currentAgents || currentAgents.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No agents configured. Add one to get started.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No agents configured. Add one to get started.</td></tr>';
       return;
     }
     currentAgents.forEach(a => {
@@ -2564,12 +2602,18 @@ async function loadAgentVMs() {
         }).join(' ');
       }
 
+      const sshKeyCount = (a.ssh_authorized_keys || []).length;
+      const sshDisplay = sshKeyCount > 0
+        ? `<span class="badge-status approved">${sshKeyCount} key${sshKeyCount > 1 ? 's' : ''}</span>`
+        : '<span class="muted">none</span>';
+
       tbody.innerHTML += `<tr>
         <td><strong>${esc(a.hostname)}</strong></td>
         <td><code>${esc(a.mac)}</code></td>
         <td>${a.ip ? '<code>' + esc(a.ip) + '</code>' : '<span class="muted">pending</span>'}</td>
         <td>${imgLabel}</td>
         <td>${skillsHTML}</td>
+        <td>${sshDisplay}</td>
         <td><span class="badge-status ${statusClass}">${esc(statusLabel)}</span></td>
         <td>
           <button class="btn btn-outline btn-sm" onclick="editAgent('${esc(a.id)}')">Edit</button>
@@ -2643,6 +2687,7 @@ function showCreateAgent() {
   document.getElementById('agent-hostname').value = '';
   document.getElementById('agent-image-version').value = '0';
   document.getElementById('agent-disk').value = '/dev/sda';
+  document.getElementById('agent-ssh-keys').value = '';
   populateAgentImageSelect('');
   populateAgentSkillsList([]);
   document.getElementById('modal-agent').classList.add('active');
@@ -2662,6 +2707,7 @@ function editAgent(id) {
   document.getElementById('agent-hostname').value = a.hostname || '';
   document.getElementById('agent-image-version').value = a.image_version || 0;
   document.getElementById('agent-disk').value = a.disk_device || '/dev/sda';
+  document.getElementById('agent-ssh-keys').value = (a.ssh_authorized_keys || []).join('\n');
   populateAgentImageSelect(a.image_id || '');
   populateAgentSkillsList(a.skill_ids || []);
   document.getElementById('modal-agent').classList.add('active');
@@ -2674,6 +2720,8 @@ async function submitAgent() {
   const image_version = parseInt(document.getElementById('agent-image-version').value) || 0;
   const disk = document.getElementById('agent-disk').value.trim() || '/dev/sda';
   const skill_ids = getSelectedAgentSkillIDs();
+  const sshKeysStr = document.getElementById('agent-ssh-keys').value.trim();
+  const ssh_authorized_keys = sshKeysStr ? sshKeysStr.split('\n').map(k => k.trim()).filter(k => k) : [];
 
   if (!mac || !hostname) {
     alert('MAC address and hostname are required');
@@ -2687,11 +2735,11 @@ async function submitAgent() {
   try {
     if (editingAgentID) {
       await api('PUT', '/api/agents', {
-        id: editingAgentID, mac, hostname, image_id, image_version, disk_device: disk, skill_ids
+        id: editingAgentID, mac, hostname, image_id, image_version, disk_device: disk, skill_ids, ssh_authorized_keys
       });
     } else {
       await api('POST', '/api/agents', {
-        mac, hostname, image_id, image_version, disk_device: disk, skill_ids
+        mac, hostname, image_id, image_version, disk_device: disk, skill_ids, ssh_authorized_keys
       });
     }
     hideAgentModal();
