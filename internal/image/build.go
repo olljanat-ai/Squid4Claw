@@ -540,7 +540,7 @@ fi
 
 # Format partition.
 echo "-> Formatting ${PART}..."
-mkfs.ext2 -F ${PART}
+mke2fs ${PART}
 
 # Mount and extract rootfs.
 echo "-> Extracting rootfs image..."
