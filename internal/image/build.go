@@ -393,6 +393,10 @@ func (m *Manager) buildDebian(img *DiskImage, rootfsPath, serverIP, distro strin
 	fstab := "/dev/sda1\t/\text2\tdefaults,noatime\t0\t1\n"
 	os.WriteFile(filepath.Join(rootfsDir, "etc/fstab"), []byte(fstab), 0o644)
 
+	// Automatically enable dynamically added memory.
+	balloon := `SUBSYSTEM=="memory", ACTION=="add", ATTR{state}="online"`
+	os.WriteFile(filepath.Join(rootfsDir, "etc/udev/rules.d/100-balloon.rules"), []byte(balloon), 0o644)
+
 	// Auto-login on tty1 via systemd.
 	overrideDir := filepath.Join(rootfsDir, "etc/systemd/system/getty@tty1.service.d")
 	os.MkdirAll(overrideDir, 0o755)
