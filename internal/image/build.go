@@ -448,6 +448,7 @@ case "$1" in prereqs) prereqs; exit 0;; esac
 copy_exec /usr/bin/wget
 copy_exec /sbin/fdisk
 copy_exec /sbin/mkfs.ext2
+copy_exec /sbin/fsck.ext2
 copy_exec /sbin/fsck.vfat
 copy_exec /sbin/mke2fs
 copy_exec /bin/tar
