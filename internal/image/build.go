@@ -103,7 +103,7 @@ func (m *Manager) buildAlpine(img *DiskImage, rootfsPath, serverIP string, setti
 	}
 
 	// Setup resolv.conf for DNS in chroot.
-	if err := os.WriteFile(filepath.Join(rootfsDir, "etc/resolv.conf"), []byte("nameserver 1.1.1.1\nnameserver 1.0.0.1\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(rootfsDir, "etc/resolv.conf"), []byte("nameserver 10.255.255.1\n"), 0o644); err != nil {
 		return fmt.Errorf("write resolv.conf: %w", err)
 	}
 
