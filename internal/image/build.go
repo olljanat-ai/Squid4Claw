@@ -361,7 +361,7 @@ func (m *Manager) buildDebian(img *DiskImage, rootfsPath, serverIP, distro strin
 		kernelPkg = "linux-image-generic"
 	}
 
-	basePkgs := []string{kernelPkg, "extlinux", "syslinux-common", "ca-certificates", "systemd-sysv", "ifupdown", "wget", "e2fsprogs", "openssh-server"}
+	basePkgs := []string{kernelPkg, "extlinux", "syslinux-common", "ca-certificates", "systemd-sysv", "ifupdown", "wget", "e2fsprogs", "openssh-server", "locales"}
 	allPkgs := append(basePkgs, img.Packages...)
 
 	if err := runChrootEnv(rootfsDir, debEnv, "apt-get", "update"); err != nil {
@@ -370,6 +370,10 @@ func (m *Manager) buildDebian(img *DiskImage, rootfsPath, serverIP, distro strin
 	if err := runChrootEnv(rootfsDir, debEnv, "apt-get", append([]string{"install", "-y"}, allPkgs...)...); err != nil {
 		return fmt.Errorf("apt-get install: %w", err)
 	}
+
+	// Configure locales
+	os.WriteFile(filepath.Join(rootfsDir, "etc/locale.gen"), []byte("en_US.UTF-8 UTF-8\n"), 0o644)
+	runChrootEnv(rootfsDir, debEnv, "locale-gen")
 
 	// Install custom CA certificate into the rootfs.
 	buildLog("Image build [%s v%s]: installing CA certificate", img.Name, img.OSVersion)
