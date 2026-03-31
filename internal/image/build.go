@@ -264,6 +264,11 @@ LABEL alpine
 		return fmt.Errorf("install AI tools: %w", err)
 	}
 
+	// Install rtk.
+	if err := installRtk(img, rootfsDir, false, nil); err != nil {
+		return fmt.Errorf("install rtk: %w", err)
+	}
+
 	// Run custom scripts.
 	for i, script := range img.Scripts {
 		buildLog("Image build [%s v%s]: running custom script %d", img.Name, img.OSVersion, i+1)
@@ -663,6 +668,11 @@ echo "=== Firewall4AI Deploy done, continuing boot ==="
 		return fmt.Errorf("install AI tools: %w", err)
 	}
 
+	// Install rtk.
+	if err := installRtk(img, rootfsDir, true, debEnv); err != nil {
+		return fmt.Errorf("install rtk: %w", err)
+	}
+
 	// Run custom scripts.
 	for i, script := range img.Scripts {
 		buildLog("Image build [%s v%s]: running custom script %d", img.Name, img.OSVersion, i+1)
@@ -1002,6 +1012,40 @@ func installContainerTools(img *DiskImage, rootfsDir string, isDebian bool, debE
 					return fmt.Errorf("install kubernetes: %w", err)
 				}
 			}
+		}
+	}
+
+	return nil
+}
+
+// installRtk downloads and installs the rtk binary from GitHub releases.
+// It uses the pre-built musl binary (rtk-x86_64-unknown-linux-musl.tar.gz) for Linux amd64.
+func installRtk(img *DiskImage, rootfsDir string, isDebian bool, debEnv []string) error {
+	if img.RtkVersion == "" || img.RtkVersion == "none" {
+		return nil
+	}
+
+	buildLog("Image build [%s v%s]: installing rtk %s", img.Name, img.OSVersion, img.RtkVersion)
+
+	// Download URL for the pre-built musl binary.
+	url := fmt.Sprintf("https://github.com/rtk-ai/rtk/releases/download/%s/rtk-x86_64-unknown-linux-musl.tar.gz", img.RtkVersion)
+
+	// Download, extract, and install to /usr/local/bin.
+	script := fmt.Sprintf(
+		"wget -qO /tmp/rtk.tar.gz '%s' && "+
+			"tar -xzf /tmp/rtk.tar.gz -C /tmp && "+
+			"install -m 755 /tmp/rtk /usr/local/bin/rtk && "+
+			"rm -f /tmp/rtk.tar.gz /tmp/rtk",
+		url,
+	)
+
+	if isDebian {
+		if err := runChrootEnv(rootfsDir, debEnv, "sh", "-c", script); err != nil {
+			return fmt.Errorf("install rtk %s: %w", img.RtkVersion, err)
+		}
+	} else {
+		if err := runChroot(rootfsDir, "sh", "-c", script); err != nil {
+			return fmt.Errorf("install rtk %s: %w", img.RtkVersion, err)
 		}
 	}
 

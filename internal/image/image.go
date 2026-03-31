@@ -61,6 +61,7 @@ type DiskImage struct {
 	Packages       []string        `json:"packages"`        // packages to install in rootfs
 	AITools        []AITool        `json:"ai_tools"`        // pre-configured AI coding tools to install
 	ContainerTools []ContainerTool `json:"container_tools"` // container runtimes to install
+	RtkVersion     string          `json:"rtk_version"`     // rtk version to install (empty or "none" = skip)
 	Scripts        []string        `json:"scripts"`         // custom shell script steps to run during build
 	Versions       []ImageVersion  `json:"versions"`
 	CreatedAt      time.Time       `json:"created_at"`

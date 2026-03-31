@@ -1,9 +1,12 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/olljanat-ai/firewall4ai/internal/agent"
 	"github.com/olljanat-ai/firewall4ai/internal/auth"
@@ -19,6 +22,7 @@ func (h *Handler) RegisterImageMgmtRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/disk-images/build", h.buildDiskImage)
 	mux.HandleFunc("DELETE /api/disk-images/version", h.deleteDiskImageVersion)
 	mux.HandleFunc("GET /api/disk-images/build-log", h.getDiskImageBuildLog)
+	mux.HandleFunc("GET /api/rtk-releases", h.getRtkReleases)
 }
 
 func (h *Handler) listDiskImages(w http.ResponseWriter, r *http.Request) {
@@ -39,13 +43,14 @@ func (h *Handler) listDiskImages(w http.ResponseWriter, r *http.Request) {
 }
 
 type createDiskImageRequest struct {
-	Name           string              `json:"name"`
-	OS             agent.OSType        `json:"os"`
-	OSVersion      string              `json:"os_version"`
-	Packages       []string            `json:"packages"`
-	AITools        []image.AITool      `json:"ai_tools"`
+	Name           string                `json:"name"`
+	OS             agent.OSType          `json:"os"`
+	OSVersion      string                `json:"os_version"`
+	Packages       []string              `json:"packages"`
+	AITools        []image.AITool        `json:"ai_tools"`
 	ContainerTools []image.ContainerTool `json:"container_tools"`
-	Scripts        []string            `json:"scripts"`
+	RtkVersion     string                `json:"rtk_version"`
+	Scripts        []string              `json:"scripts"`
 }
 
 func (h *Handler) createDiskImage(w http.ResponseWriter, r *http.Request) {
@@ -80,6 +85,7 @@ func (h *Handler) createDiskImage(w http.ResponseWriter, r *http.Request) {
 		Packages:       req.Packages,
 		AITools:        req.AITools,
 		ContainerTools: req.ContainerTools,
+		RtkVersion:     req.RtkVersion,
 		Scripts:        req.Scripts,
 	}
 
@@ -94,14 +100,15 @@ func (h *Handler) createDiskImage(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) updateDiskImage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID             string              `json:"id"`
-		Name           string              `json:"name"`
-		OS             agent.OSType        `json:"os"`
-		OSVersion      string              `json:"os_version"`
-		Packages       []string            `json:"packages"`
-		AITools        []image.AITool      `json:"ai_tools"`
+		ID             string                `json:"id"`
+		Name           string                `json:"name"`
+		OS             agent.OSType          `json:"os"`
+		OSVersion      string                `json:"os_version"`
+		Packages       []string              `json:"packages"`
+		AITools        []image.AITool        `json:"ai_tools"`
 		ContainerTools []image.ContainerTool `json:"container_tools"`
-		Scripts        []string            `json:"scripts"`
+		RtkVersion     *string               `json:"rtk_version"`
+		Scripts        []string              `json:"scripts"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -135,6 +142,9 @@ func (h *Handler) updateDiskImage(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ContainerTools != nil {
 		existing.ContainerTools = req.ContainerTools
+	}
+	if req.RtkVersion != nil {
+		existing.RtkVersion = *req.RtkVersion
 	}
 	if req.Scripts != nil {
 		existing.Scripts = req.Scripts
@@ -260,4 +270,47 @@ func (h *Handler) getDiskImageBuildLog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"log": logContent,
 	})
+}
+
+// getRtkReleases fetches available rtk release versions from GitHub.
+func (h *Handler) getRtkReleases(w http.ResponseWriter, r *http.Request) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequestWithContext(r.Context(), "GET", "https://api.github.com/repos/rtk-ai/rtk/releases", nil)
+	if err != nil {
+		http.Error(w, "failed to create request", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "failed to fetch releases from GitHub", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "failed to read GitHub response", http.StatusBadGateway)
+		return
+	}
+
+	var releases []struct {
+		TagName    string `json:"tag_name"`
+		Prerelease bool   `json:"prerelease"`
+	}
+	if err := json.Unmarshal(body, &releases); err != nil {
+		http.Error(w, "failed to parse GitHub response", http.StatusBadGateway)
+		return
+	}
+
+	// Return only stable (non-prerelease) version tags.
+	versions := []string{}
+	for _, rel := range releases {
+		if !rel.Prerelease {
+			versions = append(versions, rel.TagName)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, versions)
 }
