@@ -59,7 +59,7 @@
         </div>
         <div class="card">
           <table>
-            <thead><tr><th>Name</th><th>OS</th><th>Packages</th><th>AI Tool</th><th>Container Tools</th><th>Versions</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th>OS</th><th>Packages</th><th>AI Tool</th><th>rtk</th><th>Container Tools</th><th>Versions</th><th>Actions</th></tr></thead>
             <tbody id="disk-images-tbody">
               <tr><td colspan="7" class="empty-state">No disk images configured. Create one to get started.</td></tr>
             </tbody>
@@ -1078,6 +1078,12 @@
           <label class="checkbox-label"><input type="radio" name="disk-image-ai-tool" id="disk-image-ai-claude-code" value="claude_code"> Claude Code</label>
           <label class="checkbox-label"><input type="radio" name="disk-image-ai-tool" id="disk-image-ai-openai-codex" value="openai_codex"> OpenAI Codex</label>
         </div>
+      </div>
+      <div class="form-group">
+        <label>rtk version</label>
+        <select id="disk-image-rtk-version">
+          <option value="none">None</option>
+        </select>
       </div>
       <div class="form-group">
         <label>Container Tools</label>

@@ -2634,7 +2634,7 @@ async function loadDiskImages() {
     const tbody = document.getElementById('disk-images-tbody');
     tbody.innerHTML = '';
     if (!currentDiskImages || currentDiskImages.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No disk images configured. Create one to get started.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No disk images configured. Create one to get started.</td></tr>';
       return;
     }
 
@@ -2659,6 +2659,9 @@ async function loadDiskImages() {
       const ctTools = (img.container_tools && img.container_tools.length > 0)
         ? img.container_tools.map(t => esc(containerToolLabels[t] || t)).join(', ')
         : '<span class="muted">none</span>';
+      const rtkVer = (img.rtk_version && img.rtk_version !== 'none')
+        ? esc(img.rtk_version)
+        : '<span class="muted">none</span>';
 
       // Build versions display — each version badge is clickable to view build log.
       let versionsHTML = '';
@@ -2678,6 +2681,7 @@ async function loadDiskImages() {
         <td>${esc(osLabel)}</td>
         <td>${pkgs}</td>
         <td>${aiTools}</td>
+        <td>${rtkVer}</td>
         <td>${ctTools}</td>
         <td>${versionsHTML}</td>
         <td>
@@ -2709,6 +2713,37 @@ function formatBytes(bytes) {
   return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
 }
 
+async function loadRtkVersions(selectedVersion) {
+  const select = document.getElementById('disk-image-rtk-version');
+  // Keep "None" option, clear the rest.
+  select.innerHTML = '<option value="none">None</option>';
+  try {
+    const versions = await api('GET', '/api/rtk-releases');
+    if (versions && versions.length > 0) {
+      versions.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v;
+        opt.textContent = v;
+        select.appendChild(opt);
+      });
+    }
+  } catch (e) {
+    console.error('Failed to load rtk releases:', e);
+  }
+  if (selectedVersion && selectedVersion !== 'none') {
+    // Ensure the selected version exists as an option (in case it was removed from GitHub).
+    if (!select.querySelector(`option[value="${selectedVersion}"]`)) {
+      const opt = document.createElement('option');
+      opt.value = selectedVersion;
+      opt.textContent = selectedVersion + ' (not on GitHub)';
+      select.appendChild(opt);
+    }
+    select.value = selectedVersion;
+  } else {
+    select.value = 'none';
+  }
+}
+
 function showCreateDiskImage() {
   editingDiskImageID = null;
   document.getElementById('modal-disk-image-title').textContent = 'Add Disk Image';
@@ -2721,6 +2756,7 @@ function showCreateDiskImage() {
   document.getElementById('disk-image-ai-none').checked = true;
   document.getElementById('disk-image-ct-none').checked = true;
   document.getElementById('disk-image-scripts').value = '';
+  loadRtkVersions('none');
   document.getElementById('modal-disk-image').classList.add('active');
 }
 
@@ -2755,6 +2791,7 @@ function editDiskImage(id) {
   else if (ctTools.includes('docker')) document.getElementById('disk-image-ct-docker').checked = true;
   else document.getElementById('disk-image-ct-none').checked = true;
   document.getElementById('disk-image-scripts').value = (img.scripts || []).join('\n');
+  loadRtkVersions(img.rtk_version || 'none');
   document.getElementById('modal-disk-image').classList.add('active');
 }
 
@@ -2772,6 +2809,7 @@ async function submitDiskImage() {
   if (ctValue === 'docker') container_tools.push('docker');
   else if (ctValue === 'nomad') { container_tools.push('docker'); container_tools.push('nomad'); }
   else if (ctValue === 'kubernetes') container_tools.push('kubernetes');
+  const rtk_version = document.getElementById('disk-image-rtk-version').value;
   const scriptsStr = document.getElementById('disk-image-scripts').value.trim();
   const scripts = scriptsStr ? scriptsStr.split('\n').filter(s => s.trim()) : [];
 
@@ -2783,11 +2821,11 @@ async function submitDiskImage() {
   try {
     if (editingDiskImageID) {
       await api('PUT', '/api/disk-images', {
-        id: editingDiskImageID, name, os, os_version: osVersion, packages, ai_tools, container_tools, scripts
+        id: editingDiskImageID, name, os, os_version: osVersion, packages, ai_tools, container_tools, rtk_version, scripts
       });
     } else {
       await api('POST', '/api/disk-images', {
-        name, os, os_version: osVersion, packages, ai_tools, container_tools, scripts
+        name, os, os_version: osVersion, packages, ai_tools, container_tools, rtk_version, scripts
       });
     }
     hideDiskImageModal();
