@@ -1032,7 +1032,7 @@ func installContainerTools(img *DiskImage, rootfsDir string, isDebian bool, debE
 // It pre-runs K3s during build so that container images are pulled and the node
 // is ready immediately when the agent VM boots.
 func installK3s(rootfsDir string, isDebian bool, debEnv []string) error {
-	k3sVersion := "v1.32.4+k3s1"
+	k3sVersion := "v1.35.3+k3s1"
 	k3sURL := fmt.Sprintf("https://github.com/k3s-io/k3s/releases/download/%s/k3s", k3sVersion)
 
 	// Download K3s binary and create symlinks.
