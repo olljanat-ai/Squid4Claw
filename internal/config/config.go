@@ -32,7 +32,6 @@ type GitConfig struct {
 // Config holds the main application configuration.
 type Config struct {
 	ListenAddr         string              `json:"listen_addr"`
-	AdminAddr          string              `json:"admin_addr"`
 	AgentAPIAddr       string              `json:"agent_api_addr"`
 	TransparentTLSAddr string              `json:"transparent_tls_addr"`
 	DataDir            string              `json:"data_dir"`
@@ -131,7 +130,6 @@ func IsDistroDisabled(distroType string) bool {
 var (
 	defaultConfig = Config{
 		ListenAddr:         ":8080",
-		AdminAddr:          ":80",
 		AgentAPIAddr:       "10.255.255.1:80",
 		TransparentTLSAddr: ":8443",
 		DataDir:            "./data",

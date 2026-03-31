@@ -14,9 +14,6 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.ListenAddr != ":8080" {
 		t.Errorf("expected :8080, got %s", cfg.ListenAddr)
 	}
-	if cfg.AdminAddr != ":80" {
-		t.Errorf("expected :80, got %s", cfg.AdminAddr)
-	}
 	if cfg.MaxLogEntries != 10000 {
 		t.Errorf("expected 10000, got %d", cfg.MaxLogEntries)
 	}
@@ -43,9 +40,6 @@ func TestLoad_FromFile(t *testing.T) {
 	}
 	if cfg.ListenAddr != ":9090" {
 		t.Errorf("expected :9090, got %s", cfg.ListenAddr)
-	}
-	if cfg.AdminAddr != ":9443" {
-		t.Errorf("expected :9443, got %s", cfg.AdminAddr)
 	}
 	if cfg.MaxLogEntries != 500 {
 		t.Errorf("expected 500, got %d", cfg.MaxLogEntries)
