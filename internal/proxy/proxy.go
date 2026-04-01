@@ -807,6 +807,12 @@ func (p *Proxy) handleMITMRequest(clientConn net.Conn, req *http.Request, host, 
 
 	// Write response back to client.
 	resp.Write(clientConn)
+
+	// Fix for responses without Content-Length and without chunked encoding.
+	// This forces client to close the connection.
+	if resp.ContentLength == -1 && len(resp.TransferEncoding) == 0 {
+		resp.Close = true
+	}
 }
 
 // handleBlindTunnel is the fallback when no CA is configured: just pipe bytes.
