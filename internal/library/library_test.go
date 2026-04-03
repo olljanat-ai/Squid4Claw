@@ -362,3 +362,83 @@ func TestNormalizePackageName(t *testing.T) {
 		}
 	}
 }
+
+func TestParsePackageName_Helm(t *testing.T) {
+	tests := []struct {
+		path string
+		name string
+		ok   bool
+	}{
+		// cert-manager chart downloads from charts.jetstack.io
+		{"/charts/cert-manager-v1.14.0.tgz", "cert-manager", true},
+		{"/cert-manager-v1.14.0.tgz", "cert-manager", true},
+		{"/charts/cert-manager-v1.16.2.tgz", "cert-manager", true},
+
+		// Other charts
+		{"/charts/nginx-ingress-1.2.3.tgz", "nginx-ingress", true},
+		{"/charts/kube-prometheus-stack-45.7.1.tgz", "kube-prometheus-stack", true},
+		{"/charts/redis-17.0.0.tgz", "redis", true},
+		{"/charts/my-app-0.1.0.tgz", "my-app", true},
+
+		// Index metadata - auto-approve (empty name)
+		{"/index.yaml", "", true},
+		{"/charts/index.yaml", "", true},
+		{"/index.json", "", true},
+
+		// Other metadata paths - auto-approve
+		{"/icons/cert-manager.png", "", true},
+		{"/", "", true},
+	}
+	for _, tt := range tests {
+		name, ok := ParsePackageName(tt.path, "helm")
+		if ok != tt.ok || name != tt.name {
+			t.Errorf("ParsePackageName(%q, helm) = (%q, %v), want (%q, %v)",
+				tt.path, name, ok, tt.name, tt.ok)
+		}
+	}
+}
+
+func TestExtractHelmChartName(t *testing.T) {
+	tests := []struct {
+		filename string
+		want     string
+	}{
+		{"cert-manager-v1.14.0.tgz", "cert-manager"},
+		{"cert-manager-v1.16.2.tgz", "cert-manager"},
+		{"nginx-ingress-1.2.3.tgz", "nginx-ingress"},
+		{"kube-prometheus-stack-45.7.1.tgz", "kube-prometheus-stack"},
+		{"redis-17.0.0.tgz", "redis"},
+		{"my-app-0.1.0.tgz", "my-app"},
+		{"simple-1.0.tgz", "simple"},
+	}
+	for _, tt := range tests {
+		got := extractHelmChartName(tt.filename)
+		if got != tt.want {
+			t.Errorf("extractHelmChartName(%q) = %q, want %q", tt.filename, got, tt.want)
+		}
+	}
+}
+
+func TestCheckPackageApproval_Helm(t *testing.T) {
+	mgr := approval.NewManager()
+
+	// Approve cert-manager.
+	mgr.Decide("helm:cert-manager", "", "", "", approval.StatusApproved, "")
+
+	// Check exact match.
+	if !CheckPackageApproval(mgr, "helm:cert-manager") {
+		t.Error("expected helm:cert-manager to be approved")
+	}
+
+	// Check non-approved chart.
+	if CheckPackageApproval(mgr, "helm:nginx-ingress") {
+		t.Error("expected helm:nginx-ingress to not be approved")
+	}
+
+	// Approve wildcard pattern.
+	mgr.Decide("helm:kube-*", "", "", "", approval.StatusApproved, "")
+
+	if !CheckPackageApproval(mgr, "helm:kube-prometheus-stack") {
+		t.Error("expected helm:kube-prometheus-stack to match wildcard helm:kube-*")
+	}
+}

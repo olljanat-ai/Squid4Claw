@@ -44,6 +44,7 @@ func init() {
 	RegisterParser("nuget", "NuGet", parseNuGetPath)
 	RegisterParser("rust", "Rust", parseRustPath)
 	RegisterParser("powershell", "PowerShell", parsePowerShellPath)
+	RegisterParser("helm", "Helm", parseHelmPath)
 }
 
 // RepoForHost returns the package repository config if the host belongs to
@@ -418,6 +419,53 @@ func MatchPackageRef(pattern, pkg string) bool {
 		return strings.HasPrefix(pkg, prefix)
 	}
 	return false
+}
+
+// parseHelmPath extracts a Helm chart name from a Helm chart repository URL.
+// Chart downloads: /charts/cert-manager-v1.14.0.tgz -> "cert-manager"
+// Index: /index.yaml -> "" (auto-approve as metadata)
+// Also handles nested paths like /charts/<name>-<version>.tgz.
+func parseHelmPath(urlPath string) (string, bool) {
+	// Index and metadata files - auto-approve.
+	if strings.HasSuffix(urlPath, "/index.yaml") || strings.HasSuffix(urlPath, "/index.json") || urlPath == "/index.yaml" || urlPath == "/index.json" {
+		return "", true
+	}
+
+	// Chart tarball download: /<path>/<chartname>-<version>.tgz
+	if strings.HasSuffix(urlPath, ".tgz") {
+		parts := strings.Split(urlPath, "/")
+		if len(parts) > 0 {
+			filename := parts[len(parts)-1]
+			return extractHelmChartName(filename), true
+		}
+	}
+
+	// Other paths (icons, readme, etc.) - auto-approve as metadata.
+	return "", true
+}
+
+// extractHelmChartName extracts the chart name from a Helm chart tarball filename.
+// Helm chart tarballs follow the pattern: <name>-<version>.tgz
+// Examples:
+//   - cert-manager-v1.14.0.tgz -> "cert-manager"
+//   - nginx-ingress-1.2.3.tgz -> "nginx-ingress"
+//   - kube-prometheus-stack-45.7.1.tgz -> "kube-prometheus-stack"
+func extractHelmChartName(filename string) string {
+	filename = strings.TrimSuffix(filename, ".tgz")
+	// Find the last dash followed by a version (starts with digit or 'v' + digit).
+	// Walk backwards to find the version separator.
+	for i := len(filename) - 1; i > 0; i-- {
+		if filename[i] == '-' {
+			rest := filename[i+1:]
+			if len(rest) > 0 && (rest[0] >= '0' && rest[0] <= '9') {
+				return filename[:i]
+			}
+			if len(rest) > 1 && rest[0] == 'v' && rest[1] >= '0' && rest[1] <= '9' {
+				return filename[:i]
+			}
+		}
+	}
+	return filename
 }
 
 // TypeLabel returns a human-readable label for the package type.

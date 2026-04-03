@@ -342,9 +342,11 @@ func main() {
 	p := proxy.New(skills, approvals, creds, logger)
 	p.CA = ca
 	p.ImageApprovals = imageApprovals
+	p.HelmChartApprovals = helmChartApprovals
 	p.PackageApprovals = packageApprovals
 	p.LibraryApprovals = libraryApprovals
 	p.Registries = cfg.Registries
+	p.HelmRepos = cfg.HelmRepos
 	p.OSPackages = cfg.OSPackages
 	p.CodeLibraries = cfg.CodeLibraries
 	p.LearningMode = config.Get().LearningMode
@@ -370,6 +372,9 @@ func main() {
 	}
 	for _, reg := range cfg.Registries {
 		log.Printf("Container registry %s: intercepting hosts %v", reg.Name, reg.Hosts)
+	}
+	for _, repo := range cfg.HelmRepos {
+		log.Printf("Helm chart repo %s: intercepting hosts %v", repo.Name, repo.Hosts)
 	}
 	for _, repo := range cfg.OSPackages {
 		log.Printf("OS package repo %s (%s): intercepting hosts %v", repo.Name, repo.Type, repo.Hosts)
