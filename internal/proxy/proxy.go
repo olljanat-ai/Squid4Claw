@@ -47,12 +47,14 @@ func (w *responseBodyWrapper) Close() error {
 type Proxy struct {
 	Skills           *auth.SkillStore
 	Approvals        *approval.Manager
-	ImageApprovals   *approval.Manager // image-level approvals for container registries
-	PackageApprovals *approval.Manager // OS Packages (e.g., Debian)
-	LibraryApprovals *approval.Manager // Code Libraries (e.g., Go, npm, PyPI, NuGet)
-	Registries       []config.RegistryConfig
-	OSPackages       []config.PackageRepoConfig
-	CodeLibraries    []config.PackageRepoConfig
+	ImageApprovals      *approval.Manager // image-level approvals for container registries
+	HelmChartApprovals  *approval.Manager // Helm chart approvals
+	PackageApprovals    *approval.Manager // OS Packages (e.g., Debian)
+	LibraryApprovals    *approval.Manager // Code Libraries (e.g., Go, npm, PyPI, NuGet)
+	Registries          []config.RegistryConfig
+	HelmRepos           []config.PackageRepoConfig
+	OSPackages          []config.PackageRepoConfig
+	CodeLibraries       []config.PackageRepoConfig
 	Credentials      *credentials.Manager
 	Logger           *proxylog.Logger
 	Transport        http.RoundTripper
@@ -475,6 +477,12 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Remove our custom header before forwarding.
 	r.Header.Del(AuthHeader)
 
+	// Check if this is a Helm chart repository request.
+	if repo := library.RepoForHost(host, p.HelmRepos); repo != nil {
+		p.handleHelmChartRepoHTTPRequest(w, r, host, sourceIP, skill, repo, start)
+		return
+	}
+
 	// Check if this is a package repository request.
 	if repo := library.RepoForHost(host, p.OSPackages); repo != nil {
 		p.handlePackageRepoHTTPRequest(w, r, host, sourceIP, skill, repo, true, start)
@@ -760,6 +768,12 @@ func (p *Proxy) handleTLSRequest(clientConn net.Conn, req *http.Request, host, t
 	// Check if this is a container registry request.
 	if reg := registry.RegistryForHost(host, p.Registries); reg != nil {
 		p.handleRegistryTLSRequest(clientConn, req, host, sourceIP, skill, reg, start)
+		return
+	}
+
+	// Check if this is a Helm chart repository request.
+	if repo := library.RepoForHost(host, p.HelmRepos); repo != nil {
+		p.handleHelmChartRepoTLSRequest(clientConn, req, host, sourceIP, skill, repo, start)
 		return
 	}
 
@@ -1073,6 +1087,180 @@ func (p *Proxy) handleRegistryTLSRequest(clientConn net.Conn, req *http.Request,
 	defer resp.Body.Close()
 
 	forwardTLS(clientConn, resp)
+}
+
+// checkHelmChartRepoAccess parses the Helm chart name from the URL and runs
+// the approval logic using the HelmChartApprovals manager.
+func (p *Proxy) checkHelmChartRepoAccess(req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, start time.Time) (deniedStatus approval.Status, resource string) {
+	sid := getSkillID(skill)
+	urlPath := req.URL.Path
+	repoType := library.PackageType(repo.Type)
+
+	chartName, ok := library.ParsePackageName(urlPath, repoType)
+	if !ok {
+		// Unrecognized path — auto-approve as repo infra.
+		p.Logger.Add(proxylog.Entry{
+			SkillID:  sid,
+			Method:   req.Method,
+			Host:     host,
+			Path:     urlPath,
+			Status:   "allowed",
+			Detail:   "helm repo infra (" + repo.Name + ")",
+			Duration: time.Since(start).Milliseconds(),
+		})
+		return "", ""
+	}
+	if chartName == "" {
+		// Metadata request (index.yaml, etc.) — auto-approve.
+		p.Logger.Add(proxylog.Entry{
+			SkillID:  sid,
+			Method:   req.Method,
+			Host:     host,
+			Path:     urlPath,
+			Status:   "allowed",
+			Detail:   "helm metadata (" + repo.Name + ")",
+			Duration: time.Since(start).Milliseconds(),
+		})
+		return "", ""
+	}
+
+	// Chart-specific request — check approval.
+	ref := "helm:" + chartName
+	if !p.LearningMode && library.CheckPackageApproval(p.HelmChartApprovals, ref) {
+		// already approved — fast path
+	} else {
+		status := p.checkHelmChartApproval(ref, skill, sourceIP)
+		if status != approval.StatusApproved {
+			resource = "helm chart " + chartName
+			p.Logger.Add(proxylog.Entry{
+				SkillID: sid,
+				Method:  req.Method,
+				Host:    host,
+				Path:    urlPath,
+				Status:  string(status),
+				Detail:  "helm chart not approved: " + ref,
+			})
+			return status, resource
+		}
+	}
+	p.Logger.Add(proxylog.Entry{
+		SkillID:  sid,
+		Method:   req.Method,
+		Host:     host,
+		Path:     urlPath,
+		Status:   "allowed",
+		Detail:   ref,
+		Duration: time.Since(start).Milliseconds(),
+	})
+	return "", ""
+}
+
+// checkHelmChartApproval performs three-level approval for a Helm chart.
+func (p *Proxy) checkHelmChartApproval(ref string, skill *auth.Skill, sourceIP string) approval.Status {
+	sid := getSkillID(skill)
+
+	// 1. Global.
+	if status, ok := p.HelmChartApprovals.CheckExistingWithMatcher(ref, "", "", library.MatchPackageRef); ok && status != approval.StatusPending {
+		return status
+	}
+	// 2. VM-specific.
+	if sourceIP != "" {
+		if status, ok := p.HelmChartApprovals.CheckExistingWithMatcher(ref, "", sourceIP, library.MatchPackageRef); ok && status != approval.StatusPending {
+			return status
+		}
+	}
+	// 3. Skill-specific.
+	if sid != "" {
+		if status, ok := p.HelmChartApprovals.CheckExistingWithMatcher(ref, sid, "", library.MatchPackageRef); ok && status != approval.StatusPending {
+			return status
+		}
+	}
+
+	// Register pending at the most specific level and wait.
+	pendingIP := sourceIP
+	if sid != "" {
+		pendingIP = ""
+	}
+	status := p.HelmChartApprovals.Check(ref, sid, pendingIP, "")
+	if status == approval.StatusPending {
+		if p.LearningMode {
+			return approval.StatusApproved
+		}
+		return p.HelmChartApprovals.WaitForDecision(ref, sid, pendingIP, "", p.ApprovalTimeout)
+	}
+	return status
+}
+
+// handleHelmChartRepoTLSRequest handles TLS requests to Helm chart repositories.
+func (p *Proxy) handleHelmChartRepoTLSRequest(clientConn net.Conn, req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, start time.Time) {
+	sid := getSkillID(skill)
+
+	deniedStatus, resource := p.checkHelmChartRepoAccess(req, host, sourceIP, skill, repo, start)
+	if deniedStatus != "" {
+		writeErrorResponseConn(clientConn, deniedStatus, resource)
+		return
+	}
+
+	// Forward to the real backend.
+	req.URL.Scheme = "https"
+	req.URL.Host = host + ":443"
+	req.RequestURI = ""
+
+	resp, err := p.Transport.RoundTrip(req)
+	if err != nil {
+		p.Logger.Add(proxylog.Entry{
+			SkillID:  sid,
+			Method:   req.Method,
+			Host:     host,
+			Path:     req.URL.Path,
+			Status:   "error",
+			Detail:   err.Error(),
+			Duration: time.Since(start).Milliseconds(),
+		})
+		write502TLS(clientConn)
+		return
+	}
+	defer resp.Body.Close()
+
+	forwardTLS(clientConn, resp)
+}
+
+// handleHelmChartRepoHTTPRequest handles plain HTTP requests to Helm chart repositories.
+func (p *Proxy) handleHelmChartRepoHTTPRequest(w http.ResponseWriter, req *http.Request, host, sourceIP string, skill *auth.Skill, repo *config.PackageRepoConfig, start time.Time) {
+	sid := getSkillID(skill)
+
+	deniedStatus, resource := p.checkHelmChartRepoAccess(req, host, sourceIP, skill, repo, start)
+	if deniedStatus != "" {
+		writeErrorResponse(w, deniedStatus, resource)
+		return
+	}
+
+	// Forward the request.
+	req.RequestURI = ""
+	if req.URL.Scheme == "" {
+		req.URL.Scheme = "http"
+	}
+	if req.URL.Host == "" {
+		req.URL.Host = host
+	}
+
+	resp, err := p.Transport.RoundTrip(req)
+	if err != nil {
+		p.Logger.Add(proxylog.Entry{
+			SkillID:  sid,
+			Method:   req.Method,
+			Host:     host,
+			Path:     req.URL.Path,
+			Status:   "error",
+			Detail:   err.Error(),
+			Duration: time.Since(start).Milliseconds(),
+		})
+		http.Error(w, "Proxy error: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	forwardHTTP(w, resp)
 }
 
 // checkPackageRepoAccess checks disabled-type, parses the package name, runs
