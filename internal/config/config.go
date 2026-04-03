@@ -39,6 +39,7 @@ type Config struct {
 	TLSKeyFile         string              `json:"tls_key_file"`
 	MaxLogEntries      int                 `json:"max_log_entries"`
 	Registries         []RegistryConfig    `json:"registries"`
+	HelmRepos          []PackageRepoConfig `json:"helm_repos"`
 	OSPackages         []PackageRepoConfig `json:"os_packages"`
 	CodeLibraries      []PackageRepoConfig `json:"code_libraries"`
 	LearningMode       bool                `json:"learning_mode"`

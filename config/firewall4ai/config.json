@@ -14,6 +14,11 @@
     {"name": "oci-registry-proxy.azurecr.io", "hosts": ["oci-registry-proxy.azurecr.io"]},
     {"name": "ghcr.io/elemental-stable", "hosts": ["ghcr.io/elemental-stable"]}
   ],
+  "helm_repos": [
+    {"name": "Jetstack", "type": "helm", "hosts": ["charts.jetstack.io"]},
+    {"name": "Bitnami", "type": "helm", "hosts": ["charts.bitnami.com"]},
+    {"name": "Ingress NGINX", "type": "helm", "hosts": ["kubernetes.github.io"]}
+  ],
   "os_packages": [
     {"name": "Debian", "type": "debian", "hosts": ["deb.debian.org", "security.debian.org", "ftp.debian.org", "httpredir.debian.org", "cdn-fastly.deb.debian.org", "metadata.ftp-master.debian.org", "download.docker.com"]},
     {"name": "Alpine", "type": "alpine", "hosts": ["dl-cdn.alpinelinux.org", "dl-2.alpinelinux.org", "dl-3.alpinelinux.org", "dl-4.alpinelinux.org", "dl-5.alpinelinux.org"]},

@@ -970,3 +970,190 @@ func TestProxy_MITM_ChunkedResponseComplete(t *testing.T) {
 
 // Alias for use in test file.
 var StatusApproved = approval.StatusApproved
+
+func TestProxy_HelmChart_CertManager_Approved(t *testing.T) {
+	backend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("chart data"))
+	}))
+	defer backend.Close()
+
+	p, _, _ := setupProxy(t)
+	p.HelmChartApprovals = approval.NewManager()
+	p.HelmRepos = []config.PackageRepoConfig{
+		{Name: "Jetstack", Type: "helm", Hosts: []string{"charts.jetstack.io"}},
+	}
+	p.Transport = backend.Client().Transport
+
+	// Pre-approve cert-manager.
+	p.HelmChartApprovals.Decide("helm:cert-manager", "", "", "", approval.StatusApproved, "")
+
+	req, _ := http.NewRequest("GET", "https://charts.jetstack.io:443/charts/cert-manager-v1.16.2.tgz", nil)
+	req.Host = "charts.jetstack.io"
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+
+	repo := &p.HelmRepos[0]
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.handleHelmChartRepoTLSRequest(serverConn, req, "charts.jetstack.io", "10.0.0.1", nil, repo, time.Now())
+		serverConn.Close()
+	}()
+
+	resp, err := http.ReadResponse(bufio.NewReader(clientConn), req)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+	<-done
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("approved cert-manager chart should return 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestProxy_HelmChart_CertManager_Denied(t *testing.T) {
+	p, _, _ := setupProxy(t)
+	p.HelmChartApprovals = approval.NewManager()
+	p.HelmRepos = []config.PackageRepoConfig{
+		{Name: "Jetstack", Type: "helm", Hosts: []string{"charts.jetstack.io"}},
+	}
+
+	req, _ := http.NewRequest("GET", "https://charts.jetstack.io:443/charts/cert-manager-v1.16.2.tgz", nil)
+	req.Host = "charts.jetstack.io"
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+
+	repo := &p.HelmRepos[0]
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.handleHelmChartRepoTLSRequest(serverConn, req, "charts.jetstack.io", "10.0.0.1", nil, repo, time.Now())
+		serverConn.Close()
+	}()
+
+	resp, err := http.ReadResponse(bufio.NewReader(clientConn), req)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+	<-done
+
+	if resp.StatusCode != http.StatusProxyAuthRequired {
+		t.Errorf("unapproved cert-manager chart should return 407 (pending timeout), got %d", resp.StatusCode)
+	}
+
+	// Verify pending entry was created.
+	pending := p.HelmChartApprovals.ListPending()
+	found := false
+	for _, a := range pending {
+		if a.Host == "helm:cert-manager" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected pending helm chart approval for helm:cert-manager")
+	}
+}
+
+func TestProxy_HelmChart_IndexYaml_AutoApproved(t *testing.T) {
+	backend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("index data"))
+	}))
+	defer backend.Close()
+
+	p, _, _ := setupProxy(t)
+	p.HelmChartApprovals = approval.NewManager()
+	p.HelmRepos = []config.PackageRepoConfig{
+		{Name: "Jetstack", Type: "helm", Hosts: []string{"charts.jetstack.io"}},
+	}
+	p.Transport = backend.Client().Transport
+
+	req, _ := http.NewRequest("GET", "https://charts.jetstack.io:443/index.yaml", nil)
+	req.Host = "charts.jetstack.io"
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+
+	repo := &p.HelmRepos[0]
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.handleHelmChartRepoTLSRequest(serverConn, req, "charts.jetstack.io", "10.0.0.1", nil, repo, time.Now())
+		serverConn.Close()
+	}()
+
+	resp, err := http.ReadResponse(bufio.NewReader(clientConn), req)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+	<-done
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("index.yaml should be auto-approved, got %d", resp.StatusCode)
+	}
+}
+
+func TestProxy_HelmChart_LearningMode_CertManager(t *testing.T) {
+	backend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("chart data"))
+	}))
+	defer backend.Close()
+
+	p, _, _ := setupProxy(t)
+	p.HelmChartApprovals = approval.NewManager()
+	p.HelmRepos = []config.PackageRepoConfig{
+		{Name: "Jetstack", Type: "helm", Hosts: []string{"charts.jetstack.io"}},
+	}
+	p.LearningMode = true
+	p.Transport = backend.Client().Transport
+
+	req, _ := http.NewRequest("GET", "https://charts.jetstack.io:443/charts/cert-manager-v1.14.0.tgz", nil)
+	req.Host = "charts.jetstack.io"
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+
+	repo := &p.HelmRepos[0]
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.handleHelmChartRepoTLSRequest(serverConn, req, "charts.jetstack.io", "10.0.0.1", nil, repo, time.Now())
+		serverConn.Close()
+	}()
+
+	resp, err := http.ReadResponse(bufio.NewReader(clientConn), req)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+	<-done
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("learning mode: cert-manager chart should be allowed, got %d", resp.StatusCode)
+	}
+
+	// Verify pending entry was created for tracking.
+	pending := p.HelmChartApprovals.ListPending()
+	found := false
+	for _, a := range pending {
+		if a.Host == "helm:cert-manager" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("learning mode: expected pending helm chart approval for helm:cert-manager")
+	}
+}
