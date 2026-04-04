@@ -24,13 +24,13 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "go run ./cmd/firewall4ai/"
-waitForPort = 5000
+waitForPort = 80
 
 [workflows.workflow.metadata]
 outputType = "webview"
 
 [[ports]]
-localPort = 5000
+localPort = 80
 externalPort = 80
 
 [[ports]]

@@ -424,7 +424,7 @@ func main() {
 		log.Printf("Admin UI using provided TLS certificate")
 	}
 
-	adminServerPort := "5000"
+	adminServerPort := "80"
 	if adminTLSConfig != nil {
 		adminServerPort = "5443"
 	}
@@ -505,12 +505,12 @@ func main() {
 	// Start admin server.
 	go func() {
 		if adminTLSConfig != nil {
-			log.Printf("Admin UI listening on https://localhost%s", adminServer.Addr)
+			log.Printf("Admin UI listening on https://%s", adminServer.Addr)
 			if err := adminServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
 				log.Fatalf("Admin server error: %v", err)
 			}
 		} else {
-			log.Printf("Admin UI listening on http://localhost%s", adminServer.Addr)
+			log.Printf("Admin UI listening on http://%s", adminServer.Addr)
 			if err := adminServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				log.Fatalf("Admin server error: %v", err)
 			}

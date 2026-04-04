@@ -44,7 +44,7 @@ Firewall4AI is a transparent, default-deny firewall and proxy appliance for cont
 
 The application has been adapted for Replit:
 
-- **Admin UI:** Listens on `0.0.0.0:5000` (required for Replit preview)
+- **Admin UI:** Listens on `0.0.0.0:80` (required for Replit preview)
 - **Proxy server:** Listens on `:8080`
 - **Transparent TLS:** Listens on `:8443` (non-fatal if unavailable)
 - **DHCP/DNS/TFTP:** These require network privileges and will log non-fatal errors in dev environments
