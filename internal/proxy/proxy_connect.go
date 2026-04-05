@@ -6,7 +6,6 @@ package proxy
 import (
 	"bufio"
 	"crypto/tls"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -16,6 +15,7 @@ import (
 	"github.com/elazarl/goproxy"
 
 	"github.com/olljanat-ai/firewall4ai/internal/approval"
+	"github.com/olljanat-ai/firewall4ai/internal/auth"
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 )
 
@@ -76,6 +76,9 @@ func (p *Proxy) handleConnectDecision(host string, ctx *goproxy.ProxyCtx) (*gopr
 	return &goproxy.ConnectAction{
 		Action: goproxy.ConnectHijack,
 		Hijack: func(req *http.Request, client net.Conn, ctx *goproxy.ProxyCtx) {
+			// goproxy's ConnectHijack does NOT write the 200 response;
+			// we must send it before starting TLS or blind tunnel.
+			client.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
 			if p.CA != nil {
 				p.handleMITM(client, h, host, skill, sourceIP, start)
 			} else {

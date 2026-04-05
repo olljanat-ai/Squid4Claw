@@ -12,7 +12,6 @@ import (
 
 	"github.com/olljanat-ai/firewall4ai/internal/approval"
 	"github.com/olljanat-ai/firewall4ai/internal/auth"
-	"github.com/olljanat-ai/firewall4ai/internal/config"
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 
 	"github.com/olljanat-ai/firewall4ai/internal/library"
