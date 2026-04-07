@@ -1,5 +1,5 @@
 // Package proxy implements the transparent HTTP+HTTPS proxy with approval gates
-// and TLS MITM inspection for HTTPS traffic.
+// and TLS MITM inspection for HTTPS traffic, built on top of goproxy.
 package proxy
 
 import (
@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/elazarl/goproxy"
+
 	"github.com/olljanat-ai/firewall4ai/internal/approval"
 	"github.com/olljanat-ai/firewall4ai/internal/auth"
 	"github.com/olljanat-ai/firewall4ai/internal/certgen"
@@ -26,8 +28,6 @@ import (
 
 const (
 	approvalTimeout = 15 * time.Minute
-	// AuthHeader is used by AI agents to provide their skill token.
-	AuthHeader = "X-Firewall4AI-Token"
 )
 
 // responseBodyWrapper restores the full original response body (prefix for logging
@@ -61,15 +61,34 @@ type Proxy struct {
 	ApprovalTimeout    time.Duration
 	LearningMode       bool                  // when true, allow all traffic by default (still logged)
 	OnActivity         func(sourceIP string) // called on each request with the source IP
+
+	goProxy *goproxy.ProxyHttpServer
+}
+
+// goproxyLogBridge adapts our proxylog.Logger to goproxy's Logger interface,
+// routing goproxy internal messages through our unified logging.
+type goproxyLogBridge struct {
+	logger *proxylog.Logger
+}
+
+func (b *goproxyLogBridge) Printf(format string, v ...any) {
+	msg := fmt.Sprintf(format, v...)
+	b.logger.Add(proxylog.Entry{
+		Method: "GOPROXY",
+		Status: "info",
+		Detail: msg,
+	})
 }
 
 // New creates a new Proxy with the given dependencies.
-func New(skills *auth.SkillStore, approvals *approval.Manager, creds *credentials.Manager, logger *proxylog.Logger) *Proxy {
-	return &Proxy{
+// The ca parameter is optional; when non-nil it enables TLS MITM inspection.
+func New(skills *auth.SkillStore, approvals *approval.Manager, creds *credentials.Manager, logger *proxylog.Logger, ca *certgen.CA) *Proxy {
+	p := &Proxy{
 		Skills:          skills,
 		Approvals:       approvals,
 		Credentials:     creds,
 		Logger:          logger,
+		CA:              ca,
 		ApprovalTimeout: approvalTimeout,
 		Transport: &http.Transport{
 			TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
@@ -79,15 +98,27 @@ func New(skills *auth.SkillStore, approvals *approval.Manager, creds *credential
 			ResponseHeaderTimeout: 30 * time.Second,
 		},
 	}
+
+	gp := goproxy.NewProxyHttpServer()
+	gp.Verbose = false
+	gp.Logger = &goproxyLogBridge{logger: logger}
+
+	// CONNECT handler: decide MITM vs blind tunnel vs reject.
+	gp.OnRequest().HandleConnect(goproxy.FuncHttpsHandler(p.handleConnectDecision))
+
+	// Request handler: auth, approval, credential injection, forwarding.
+	gp.OnRequest().DoFunc(p.onRequest)
+
+	// Response handler: no-op (logging done in onRequest/processRequest).
+	gp.OnResponse().DoFunc(p.onResponse)
+
+	p.goProxy = gp
+	return p
 }
 
 // ServeHTTP handles both HTTP requests and HTTPS CONNECT tunnels.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodConnect {
-		p.handleConnect(w, r)
-	} else {
-		p.handleHTTP(w, r)
-	}
+	p.goProxy.ServeHTTP(w, r)
 }
 
 // --- Host / source helpers ---
@@ -140,21 +171,6 @@ func getSkillID(skill *auth.Skill) string {
 	return skill.ID
 }
 
-// authenticateOptional extracts and validates the skill token.
-// Returns (nil, nil) if no token is provided (anonymous access).
-// Returns (nil, error) if an invalid token is provided.
-func (p *Proxy) authenticateOptional(r *http.Request) (*auth.Skill, error) {
-	token := r.Header.Get(AuthHeader)
-	if token == "" {
-		return nil, nil
-	}
-	skill, ok := p.Skills.Authenticate(token)
-	if !ok {
-		return nil, fmt.Errorf("invalid or inactive token")
-	}
-	return skill, nil
-}
-
 // getLoggingMode returns the logging mode for the request's host/path.
 func (p *Proxy) getLoggingMode(host, path string, skill *auth.Skill, sourceIP string) approval.LoggingMode {
 	sid := getSkillID(skill)
@@ -204,19 +220,13 @@ func writeErrorResponseConn(conn net.Conn, status approval.Status, resource stri
 	resp.Write(conn)
 }
 
-// --- Forwarding helpers ---
-
-// forwardHTTP copies the upstream response headers, status, and body to an
-// http.ResponseWriter.
-func forwardHTTP(w http.ResponseWriter, resp *http.Response) {
-	for k, vv := range resp.Header {
-		for _, v := range vv {
-			w.Header().Add(k, v)
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+// errorResponse creates an *http.Response using goproxy.NewResponse to keep
+// goproxy's internal state consistent when used within OnRequest handlers.
+func errorResponse(req *http.Request, code int, msg string) *http.Response {
+	return goproxy.NewResponse(req, "text/plain; charset=utf-8", code, msg+"\n")
 }
+
+// --- Forwarding helpers (for transparent TLS only) ---
 
 // forwardTLS writes the upstream response to a raw net.Conn using HTTP/1.1 wire format.
 // When the upstream response uses chunked Transfer-Encoding (no Content-Length),
@@ -225,15 +235,10 @@ func forwardHTTP(w http.ResponseWriter, resp *http.Response) {
 // stays open (e.g. helm repo add with ~600KB index responses).
 func forwardTLS(conn net.Conn, resp *http.Response) {
 	if resp.ContentLength < 0 && resp.Body != nil {
-		body, err := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if err != nil {
-			resp.Body = io.NopCloser(bytes.NewReader(body))
-			resp.ContentLength = int64(len(body))
-		} else {
-			resp.Body = io.NopCloser(bytes.NewReader(body))
-			resp.ContentLength = int64(len(body))
-		}
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		resp.ContentLength = int64(len(body))
 		resp.TransferEncoding = nil
 	}
 	resp.Write(conn)

@@ -1,6 +1,7 @@
 // proxy_transparent.go handles transparent TLS interception: accepting
 // connections redirected by iptables, extracting the SNI hostname from
-// the TLS ClientHello, and performing MITM inspection with per-request approval.
+// the TLS ClientHello, and performing MITM inspection with per-request approval
+// via the shared processRequest function.
 
 package proxy
 
@@ -11,7 +12,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strings"
 
 	proxylog "github.com/olljanat-ai/firewall4ai/internal/logging"
 )
@@ -30,7 +30,8 @@ func (p *Proxy) ServeTransparentTLS(listener net.Listener) {
 
 // HandleTransparentTLS handles a raw TCP connection redirected by iptables
 // for transparent HTTPS interception. It terminates TLS using SNI to
-// determine the target host, then reads and forwards HTTP requests.
+// determine the target host, then reads and forwards HTTP requests via
+// processRequest.
 func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
 	defer clientConn.Close()
 
@@ -87,32 +88,19 @@ func (p *Proxy) HandleTransparentTLS(clientConn net.Conn) {
 	}
 }
 
-// handleTransparentTLSRequest authenticates a request from a transparent TLS
-// connection and delegates to the unified handleTLSRequest handler.
+// handleTransparentTLSRequest processes a request from a transparent TLS
+// connection via processRequest.
 func (p *Proxy) handleTransparentTLSRequest(clientConn net.Conn, req *http.Request, host, sourceIP string) {
-	// Authenticate (optional in transparent mode).
-	skill, err := p.authenticateOptional(req)
-	if err != nil {
-		p.Logger.Add(proxylog.Entry{
-			Method: req.Method,
-			Host:   host,
-			Path:   req.URL.Path,
-			Status: "denied",
-			Detail: "auth failed: " + err.Error(),
-		})
-		msg := "Firewall4AI: Proxy authentication failed: " + err.Error()
-		resp := &http.Response{
-			StatusCode: http.StatusProxyAuthRequired,
-			ProtoMajor: 1,
-			ProtoMinor: 1,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(msg + "\n")),
-		}
-		resp.Header.Set("Content-Type", "text/plain; charset=utf-8")
-		resp.ContentLength = int64(len(msg) + 1)
-		resp.Write(clientConn)
-		return
-	}
+	// Set URL for HTTPS forwarding.
+	req.URL.Scheme = "https"
+	req.URL.Host = host + ":443"
+	req.Host = host
 
-	p.handleTLSRequest(clientConn, req, host, host+":443", skill, sourceIP)
+	resp, _ := p.processRequest(req, sourceIP)
+
+	// Write response to the TLS connection.
+	forwardTLS(clientConn, resp)
+	if resp.Body != nil {
+		resp.Body.Close()
+	}
 }
