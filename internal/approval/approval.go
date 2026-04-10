@@ -230,6 +230,20 @@ func (m *Manager) WaitForDecision(host, skillID, sourceIP, pathPrefix string, ti
 	case status := <-ch:
 		return status
 	case <-timer.C:
+		// Clean up the timed-out channel to prevent a memory leak.
+		m.mu.Lock()
+		if waiters, ok := m.waiters[k]; ok {
+			for i, w := range waiters {
+				if w == ch {
+					m.waiters[k] = append(waiters[:i], waiters[i+1:]...)
+					break
+				}
+			}
+			if len(m.waiters[k]) == 0 {
+				delete(m.waiters, k)
+			}
+		}
+		m.mu.Unlock()
 		return StatusPendingTimeout // timeout = still waiting for admin
 	}
 }
