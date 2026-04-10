@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -77,6 +78,10 @@ func (h *Handler) systemLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"logs": string(out)})
 }
 
+// validOCIRef matches standard OCI image references:
+// registry/path:tag or registry/path@sha256:digest
+var validOCIRef = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*(:[0-9]+)?(/[a-zA-Z0-9._-]+)+(:[a-zA-Z0-9._-]+)?(@sha256:[a-f0-9]{64})?$`)
+
 func (h *Handler) systemUpgrade(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Image string `json:"image"`
@@ -88,6 +93,10 @@ func (h *Handler) systemUpgrade(w http.ResponseWriter, r *http.Request) {
 	image := strings.TrimSpace(req.Image)
 	if image == "" {
 		image = "ghcr.io/olljanat-ai/firewall4ai:latest"
+	}
+	if !validOCIRef.MatchString(image) {
+		http.Error(w, "invalid image reference", http.StatusBadRequest)
+		return
 	}
 	log.Printf("System upgrade requested with image: %s", image)
 	// Run upgrade in background since it will reboot.
