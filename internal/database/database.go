@@ -5,6 +5,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -54,16 +55,18 @@ func (c *DatabaseConfig) DSN() string {
 	if port == 0 {
 		port = DefaultPort(c.Driver)
 	}
+	user := url.PathEscape(c.Username)
+	pass := url.PathEscape(c.Password)
 	switch c.Driver {
 	case DriverMSSQL:
 		return fmt.Sprintf("sqlserver://%s:%s@%s:%d?database=%s",
-			c.Username, c.Password, c.Host, port, c.DBName)
+			user, pass, c.Host, port, c.DBName)
 	case DriverPostgres:
 		return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable",
-			c.Username, c.Password, c.Host, port, c.DBName)
+			user, pass, c.Host, port, c.DBName)
 	case DriverMySQL:
 		return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
-			c.Username, c.Password, c.Host, port, c.DBName)
+			user, pass, c.Host, port, c.DBName)
 	default:
 		return ""
 	}
