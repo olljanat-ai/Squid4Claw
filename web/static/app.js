@@ -495,7 +495,7 @@ async function bulkAction(prefix, action) {
       for (const a of applicable) {
         const pp = prefix === 'url' ? (a.path_prefix || '') : '';
         const useStatus = (a.status !== 'pending' && a.status !== 'pending_timeout') ? a.status : 'approved';
-        await api('POST', apiDecide, { host: a.host, skill_id: '', source_ip: '', path_prefix: pp, status: useStatus });
+        await api('POST', apiDecide, { host: a.host, skill_id: '', source_ip: '', path_prefix: pp, status: useStatus, category: a.category || '' });
         await api('DELETE', apiDelete, { host: a.host, skill_id: a.skill_id || '', source_ip: a.source_ip, path_prefix: pp });
       }
     } catch (e) { alert('Error: ' + e.message); return; }
@@ -654,12 +654,11 @@ async function loadApprovals() {
     const tbody = document.getElementById('approvals-tbody');
     const rows = [];
     if (items.length === 0) {
-      rows.push('<tr><td colspan="10" class="empty-state">No URL rules</td></tr>');
+      rows.push('<tr><td colspan="9" class="empty-state">No URL rules</td></tr>');
     } else {
       items.forEach((a, i) => {
         const key = approvalKey(a);
         const cbChecked = selectedApprovals.has(key) ? 'checked' : '';
-        const skillDisplay = formatSkillID(a.skill_id);
         const sourceDisplay = formatSourceIP(a.source_ip);
         const pathDisplay = formatPathPrefix(a.path_prefix);
         const categoryDisplay = formatCategory(a.category);
@@ -678,7 +677,7 @@ async function loadApprovals() {
              ${editBtn} ${deleteBtn}`;
         } else {
           const promoteBtn = a.source_ip && !a.skill_id
-            ? `<button class="btn btn-outline btn-sm" onclick="promoteToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${esc(pp)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
+            ? `<button class="btn btn-outline btn-sm" onclick="promoteToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${esc(pp)}','${a.status}','${esc(a.category || '')}')" title="Promote to global rule">Promote to Global</button>` : '';
           actions = `<button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','approved')">Approve</button>
              <button class="btn btn-outline btn-sm" onclick="decide('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','${esc(pp)}','denied')">Deny</button>
              ${promoteBtn}
@@ -693,7 +692,6 @@ async function loadApprovals() {
           <td>${pathDisplay}</td>
           <td>${categoryDisplay}</td>
           <td>${logModeDisplay}</td>
-          <td>${skillDisplay}</td>
           <td>${sourceDisplay}</td>
           <td><span class="badge-status ${a.status}">${a.status}</span></td>
           <td>${timeAgo(a.updated_at)}</td>
@@ -736,10 +734,10 @@ async function deleteApproval(host, skillID, sourceIP, pathPrefix) {
   }
 }
 
-async function promoteToGlobal(host, sourceIP, pathPrefix, status) {
+async function promoteToGlobal(host, sourceIP, pathPrefix, status, category) {
   if (!confirm(`Promote "${host}" from VM ${sourceIP} to a global rule?`)) return;
   try {
-    await api('POST', '/api/approvals/decide', { host, skill_id: '', source_ip: '', path_prefix: pathPrefix, status });
+    await api('POST', '/api/approvals/decide', { host, skill_id: '', source_ip: '', path_prefix: pathPrefix, status, category: category || '' });
     await api('DELETE', '/api/approvals', { host, skill_id: '', source_ip: sourceIP, path_prefix: pathPrefix });
     const activePage = document.querySelector('.page.active');
     if (activePage) {
@@ -915,12 +913,11 @@ async function loadImages() {
     const tbody = document.getElementById('images-tbody');
     const rows = [];
     if (items.length === 0) {
-      rows.push('<tr><td colspan="8" class="empty-state">No image approval records</td></tr>');
+      rows.push('<tr><td colspan="7" class="empty-state">No image approval records</td></tr>');
     } else {
       items.forEach((a, i) => {
         const key = imgKey(a);
         const cbChecked = selectedImages.has(key) ? 'checked' : '';
-        const skillDisplay = formatSkillID(a.skill_id);
         const sourceDisplay = formatSourceIP(a.source_ip);
         const categoryDisplay = formatCategory(a.category);
         const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditImageRule(${i})" title="Edit rule">Edit</button>`;
@@ -937,7 +934,7 @@ async function loadImages() {
              ${editBtn} ${deleteBtn}`;
         } else {
           const promoteBtn = a.source_ip && !a.skill_id
-            ? `<button class="btn btn-outline btn-sm" onclick="promoteImageToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
+            ? `<button class="btn btn-outline btn-sm" onclick="promoteImageToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}','${esc(a.category || '')}')" title="Promote to global rule">Promote to Global</button>` : '';
           actions = `<button class="btn btn-outline btn-sm" onclick="decideImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
              <button class="btn btn-outline btn-sm" onclick="decideImage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
              ${promoteBtn}
@@ -947,7 +944,6 @@ async function loadImages() {
           <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('image',this)"></td>
           <td><strong>${esc(a.host)}</strong>${a.host.includes('*') ? ' <span class="badge-status" style="background:rgba(99,102,241,0.15);color:var(--accent);font-size:10px">wildcard</span>' : ''}</td>
           <td>${categoryDisplay}</td>
-          <td>${skillDisplay}</td>
           <td>${sourceDisplay}</td>
           <td><span class="badge-status ${a.status}">${a.status}</span></td>
           <td>${timeAgo(a.updated_at)}</td>
@@ -990,10 +986,10 @@ async function deleteImage(host, skillID, sourceIP) {
   }
 }
 
-async function promoteImageToGlobal(host, sourceIP, status) {
+async function promoteImageToGlobal(host, sourceIP, status, category) {
   if (!confirm(`Promote "${host}" from VM ${sourceIP} to a global rule?`)) return;
   try {
-    await api('POST', '/api/images/decide', { host, skill_id: '', source_ip: '', status });
+    await api('POST', '/api/images/decide', { host, skill_id: '', source_ip: '', status, category: category || '' });
     await api('DELETE', '/api/images', { host, skill_id: '', source_ip: sourceIP });
     const activePage = document.querySelector('.page.active');
     if (activePage) {
@@ -1103,12 +1099,11 @@ async function loadHelmCharts() {
     const tbody = document.getElementById('helm-charts-tbody');
     const rows = [];
     if (items.length === 0) {
-      rows.push('<tr><td colspan="8" class="empty-state">No helm chart approval records</td></tr>');
+      rows.push('<tr><td colspan="7" class="empty-state">No helm chart approval records</td></tr>');
     } else {
       items.forEach((a, i) => {
         const key = imgKey(a);
         const cbChecked = selectedHelmCharts.has(key) ? 'checked' : '';
-        const skillDisplay = formatSkillID(a.skill_id);
         const sourceDisplay = formatSourceIP(a.source_ip);
         const categoryDisplay = formatCategory(a.category);
         const editBtn = `<button class="btn btn-outline btn-sm" onclick="showEditHelmChartRule(${i})" title="Edit rule">Edit</button>`;
@@ -1125,7 +1120,7 @@ async function loadHelmCharts() {
              ${editBtn} ${deleteBtn}`;
         } else {
           const promoteBtn = a.source_ip && !a.skill_id
-            ? `<button class="btn btn-outline btn-sm" onclick="promoteHelmChartToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
+            ? `<button class="btn btn-outline btn-sm" onclick="promoteHelmChartToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}','${esc(a.category || '')}')" title="Promote to global rule">Promote to Global</button>` : '';
           actions = `<button class="btn btn-outline btn-sm" onclick="decideHelmChart('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
              <button class="btn btn-outline btn-sm" onclick="decideHelmChart('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
              ${promoteBtn}
@@ -1135,7 +1130,6 @@ async function loadHelmCharts() {
           <td class="cb-col"><input type="checkbox" class="row-cb" data-key="${esc(key)}" ${cbChecked} onchange="toggleSelect('helm_chart',this)"></td>
           <td><strong>${esc(a.host)}</strong>${a.host.includes('*') ? ' <span class="badge-status" style="background:rgba(99,102,241,0.15);color:var(--accent);font-size:10px">wildcard</span>' : ''}</td>
           <td>${categoryDisplay}</td>
-          <td>${skillDisplay}</td>
           <td>${sourceDisplay}</td>
           <td><span class="badge-status ${a.status}">${a.status}</span></td>
           <td>${timeAgo(a.updated_at)}</td>
@@ -1178,10 +1172,10 @@ async function deleteHelmChart(host, skillID, sourceIP) {
   }
 }
 
-async function promoteHelmChartToGlobal(host, sourceIP, status) {
+async function promoteHelmChartToGlobal(host, sourceIP, status, category) {
   if (!confirm(`Promote "${host}" from VM ${sourceIP} to a global rule?`)) return;
   try {
-    await api('POST', '/api/helm-charts/decide', { host, skill_id: '', source_ip: '', status });
+    await api('POST', '/api/helm-charts/decide', { host, skill_id: '', source_ip: '', status, category: category || '' });
     await api('DELETE', '/api/helm-charts', { host, skill_id: '', source_ip: sourceIP });
     const activePage = document.querySelector('.page.active');
     if (activePage) {
@@ -1293,12 +1287,11 @@ async function loadPackages() {
     const tbody = document.getElementById('packages-tbody');
     const rows = [];
     if (items.length === 0) {
-      rows.push('<tr><td colspan="9" class="empty-state">No OS package approval records</td></tr>');
+      rows.push('<tr><td colspan="8" class="empty-state">No OS package approval records</td></tr>');
     } else {
       items.forEach((a, i) => {
         const key = imgKey(a);
         const cbChecked = selectedPackages.has(key) ? 'checked' : '';
-        const skillDisplay = formatSkillID(a.skill_id);
         const sourceDisplay = formatSourceIP(a.source_ip);
         const categoryDisplay = formatCategory(a.category);
         const typeDisplay = formatLibraryType(a.host);
@@ -1317,7 +1310,7 @@ async function loadPackages() {
              ${editBtn} ${deleteBtn}`;
         } else {
           const promoteBtn = a.source_ip && !a.skill_id
-            ? `<button class="btn btn-outline btn-sm" onclick="promotePackageToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
+            ? `<button class="btn btn-outline btn-sm" onclick="promotePackageToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}','${esc(a.category || '')}')" title="Promote to global rule">Promote to Global</button>` : '';
           actions = `<button class="btn btn-outline btn-sm" onclick="decidePackage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
              <button class="btn btn-outline btn-sm" onclick="decidePackage('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
              ${promoteBtn}
@@ -1328,7 +1321,6 @@ async function loadPackages() {
           <td><strong>${nameDisplay}</strong></td>
           <td>${typeDisplay}</td>
           <td>${categoryDisplay}</td>
-          <td>${skillDisplay}</td>
           <td>${sourceDisplay}</td>
           <td><span class="badge-status ${a.status}">${a.status}</span></td>
           <td>${timeAgo(a.updated_at)}</td>
@@ -1361,10 +1353,10 @@ async function deletePackage(host, skillID, sourceIP) {
   } catch (e) { alert('Error: ' + e.message); }
 }
 
-async function promotePackageToGlobal(host, sourceIP, status) {
+async function promotePackageToGlobal(host, sourceIP, status, category) {
   if (!confirm(`Promote "${getLibraryName(host)}" from VM ${sourceIP} to a global rule?`)) return;
   try {
-    await api('POST', '/api/packages/decide', { host, skill_id: '', source_ip: '', status });
+    await api('POST', '/api/packages/decide', { host, skill_id: '', source_ip: '', status, category: category || '' });
     await api('DELETE', '/api/packages', { host, skill_id: '', source_ip: sourceIP });
     const activePage = document.querySelector('.page.active');
     if (activePage) navigate(activePage.id.replace('page-', ''));
@@ -1472,12 +1464,11 @@ async function loadLibraries() {
     const tbody = document.getElementById('libraries-tbody');
     const rows = [];
     if (items.length === 0) {
-      rows.push('<tr><td colspan="9" class="empty-state">No code library approval records</td></tr>');
+      rows.push('<tr><td colspan="8" class="empty-state">No code library approval records</td></tr>');
     } else {
       items.forEach((a, i) => {
         const key = imgKey(a);
         const cbChecked = selectedLibraries.has(key) ? 'checked' : '';
-        const skillDisplay = formatSkillID(a.skill_id);
         const sourceDisplay = formatSourceIP(a.source_ip);
         const categoryDisplay = formatCategory(a.category);
         const typeDisplay = formatLibraryType(a.host);
@@ -1496,7 +1487,7 @@ async function loadLibraries() {
              ${editBtn} ${deleteBtn}`;
         } else {
           const promoteBtn = a.source_ip && !a.skill_id
-            ? `<button class="btn btn-outline btn-sm" onclick="promoteLibraryToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}')" title="Promote to global rule">Promote to Global</button>` : '';
+            ? `<button class="btn btn-outline btn-sm" onclick="promoteLibraryToGlobal('${esc(a.host)}','${esc(a.source_ip)}','${a.status}','${esc(a.category || '')}')" title="Promote to global rule">Promote to Global</button>` : '';
           actions = `<button class="btn btn-outline btn-sm" onclick="decideLibrary('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','approved')">Approve</button>
              <button class="btn btn-outline btn-sm" onclick="decideLibrary('${esc(a.host)}','${esc(a.skill_id)}','${esc(a.source_ip)}','denied')">Deny</button>
              ${promoteBtn}
@@ -1507,7 +1498,6 @@ async function loadLibraries() {
           <td><strong>${nameDisplay}</strong></td>
           <td>${typeDisplay}</td>
           <td>${categoryDisplay}</td>
-          <td>${skillDisplay}</td>
           <td>${sourceDisplay}</td>
           <td><span class="badge-status ${a.status}">${a.status}</span></td>
           <td>${timeAgo(a.updated_at)}</td>
@@ -1540,10 +1530,10 @@ async function deleteLibrary(host, skillID, sourceIP) {
   } catch (e) { alert('Error: ' + e.message); }
 }
 
-async function promoteLibraryToGlobal(host, sourceIP, status) {
+async function promoteLibraryToGlobal(host, sourceIP, status, category) {
   if (!confirm(`Promote "${getLibraryName(host)}" from VM ${sourceIP} to a global rule?`)) return;
   try {
-    await api('POST', '/api/libraries/decide', { host, skill_id: '', source_ip: '', status });
+    await api('POST', '/api/libraries/decide', { host, skill_id: '', source_ip: '', status, category: category || '' });
     await api('DELETE', '/api/libraries', { host, skill_id: '', source_ip: sourceIP });
     const activePage = document.querySelector('.page.active');
     if (activePage) navigate(activePage.id.replace('page-', ''));
