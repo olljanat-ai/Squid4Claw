@@ -19,6 +19,7 @@ import (
 
 	"github.com/olljanat-ai/firewall4ai/internal/approval"
 	"github.com/olljanat-ai/firewall4ai/internal/auth"
+	"github.com/olljanat-ai/firewall4ai/internal/cainjector"
 	"github.com/olljanat-ai/firewall4ai/internal/certgen"
 	"github.com/olljanat-ai/firewall4ai/internal/config"
 	"github.com/olljanat-ai/firewall4ai/internal/credentials"
@@ -59,6 +60,7 @@ type Proxy struct {
 	Logger             *proxylog.Logger
 	Transport          http.RoundTripper
 	CA                 *certgen.CA
+	CAInjector         *cainjector.Injector // optional: injects CA into pulled images
 	ApprovalTimeout    time.Duration
 	learningMode       atomic.Bool           // when true, allow all traffic by default (still logged)
 	OnActivity         func(sourceIP string) // called on each request with the source IP

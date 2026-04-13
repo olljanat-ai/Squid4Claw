@@ -43,10 +43,11 @@ type Config struct {
 	OSPackages         []PackageRepoConfig `json:"os_packages"`
 	CodeLibraries      []PackageRepoConfig `json:"code_libraries"`
 	LearningMode       bool                `json:"learning_mode"`
-	DisabledLanguages  []string            `json:"-"` // runtime only, persisted in state.json
-	DisabledDistros    []string            `json:"-"` // runtime only, persisted in state.json
-	MaxFullLogBody     int                 `json:"-"` // runtime only, persisted in state.json
-	Git                GitConfig           `json:"-"` // runtime only, persisted in state.json
+	EnableCAInjection  bool                `json:"enable_ca_injection"` // inject CA cert into pulled images
+	DisabledLanguages  []string            `json:"-"`                  // runtime only, persisted in state.json
+	DisabledDistros    []string            `json:"-"`                  // runtime only, persisted in state.json
+	MaxFullLogBody     int                 `json:"-"`                  // runtime only, persisted in state.json
+	Git                GitConfig           `json:"-"`                  // runtime only, persisted in state.json
 }
 
 // SetLearningMode updates the learning mode setting at runtime.
