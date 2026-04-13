@@ -19,6 +19,7 @@ import (
 	"github.com/olljanat-ai/firewall4ai/internal/api"
 	"github.com/olljanat-ai/firewall4ai/internal/approval"
 	"github.com/olljanat-ai/firewall4ai/internal/auth"
+	"github.com/olljanat-ai/firewall4ai/internal/cainjector"
 	"github.com/olljanat-ai/firewall4ai/internal/certgen"
 	"github.com/olljanat-ai/firewall4ai/internal/config"
 	"github.com/olljanat-ai/firewall4ai/internal/credentials"
@@ -350,6 +351,10 @@ func main() {
 
 	// Setup proxy server with CA for MITM and registry awareness.
 	p := proxy.New(skills, approvals, creds, logger, ca)
+	if cfg.EnableCAInjection && ca != nil {
+		p.CAInjector = cainjector.New(ca.CertPEM)
+		log.Printf("CA injection into container images is ENABLED")
+	}
 	p.ImageApprovals = imageApprovals
 	p.HelmChartApprovals = helmChartApprovals
 	p.PackageApprovals = packageApprovals
