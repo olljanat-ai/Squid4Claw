@@ -85,8 +85,12 @@ func NewPersistentLogger(maxSize int, logDir string) *Logger {
 	return l
 }
 
-// Add appends a new log entry and returns it.
+// Add appends a new log entry and returns it. Any FullDetail attached to the
+// entry is redacted in place before storage so that sensitive request/response
+// headers and known secret body fields are not persisted or served back.
 func (l *Logger) Add(e Entry) Entry {
+	RedactFullDetail(e.FullDetail)
+
 	l.mu.Lock()
 	e.ID = l.nextID
 	l.nextID++
